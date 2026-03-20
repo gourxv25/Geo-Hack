@@ -4,6 +4,10 @@ Query API Endpoints - GraphRAG Question Answering
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
+from time import perf_counter
+
+from app.graphrag import graphrag_service
+from app.insights import insights_service
 
 router = APIRouter()
 
@@ -26,7 +30,7 @@ class EntityReference(BaseModel):
 class AnswerExplanation(BaseModel):
     """Detailed explanation of the answer"""
     reasoning_chain: List[str]
-    supporting_facts: List[str]
+    supporting_facts: List[Dict[str, Any]]
     confidence_level: str  # high, medium, low
     data_sources: List[str]
 
@@ -56,37 +60,57 @@ async def query_ontology(request: QueryRequest):
     - Risk analysis with severity levels
     - Source citations
     """
-    # TODO: Implement GraphRAG query processing
-    # This will be implemented in Phase 6
-    
+    started = perf_counter()
+    try:
+        rag_result = await graphrag_service.query(request.question)
+        map_data = await insights_service.get_map_data()
+        risk_data = await insights_service.get_risk_analysis(category=request.domain)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Query processing failed: {e}") from e
+
+    supporting_facts = rag_result.get("supporting_facts", [])
+    if not isinstance(supporting_facts, list):
+        supporting_facts = []
+
+    # Convert graph entities to API response shape.
+    entities: List[EntityReference] = []
+    for entity in rag_result.get("related_entities", []):
+        name = entity.get("name", "Unknown")
+        entity_type = entity.get("type", "Unknown")
+        confidence = float(entity.get("confidence", 0.7))
+        entities.append(
+            EntityReference(
+                name=name,
+                type=entity_type,
+                relevance_score=max(0.0, min(confidence, 1.0)),
+            )
+        )
+
+    confidence_score = float(rag_result.get("confidence", 0.0))
+    if confidence_score >= 0.75:
+        confidence_level = "high"
+    elif confidence_score >= 0.45:
+        confidence_level = "medium"
+    else:
+        confidence_level = "low"
+
+    elapsed_ms = (perf_counter() - started) * 1000
+
     return QueryResponse(
         question=request.question,
-        answer="This endpoint will be implemented in Phase 6 with GraphRAG capabilities.",
+        answer=rag_result.get("answer", "No answer available"),
         explanation=AnswerExplanation(
-            reasoning_chain=["Step 1: Parse question", "Step 2: Extract entities", "Step 3: Query graph"],
-            supporting_facts=["Fact 1", "Fact 2"],
-            confidence_level="medium",
-            data_sources=["Source 1", "Source 2"]
+            reasoning_chain=rag_result.get("reasoning_chain", []),
+            supporting_facts=supporting_facts,
+            confidence_level=confidence_level,
+            data_sources=["knowledge_graph", "llm_generation"],
         ),
-        entities=[
-            EntityReference(name="Entity 1", type="Country", relevance_score=0.95)
-        ],
+        entities=entities,
         relationships=[],
-        impact_map={
-            "countries": [
-                {"name": "United States", "impact_score": 0.8, "impact_type": "high"},
-                {"name": "China", "impact_score": 0.7, "impact_type": "medium"}
-            ]
-        },
-        risk_analysis={
-            "overall_risk": "medium",
-            "categories": [
-                {"name": "Geopolitical", "score": 0.7, "trend": "increasing"},
-                {"name": "Economic", "score": 0.5, "trend": "stable"}
-            ]
-        },
-        sources=[{"title": "Sample Source", "url": "https://example.com"}],
-        query_time_ms=150.5
+        impact_map=map_data,
+        risk_analysis=risk_data,
+        sources=[],
+        query_time_ms=round(elapsed_ms, 2),
     )
 
 
@@ -95,12 +119,13 @@ async def search_entities(query: str, limit: int = 10):
     """
     Search for entities in the knowledge graph
     """
-    # TODO: Implement entity search
-    return {
-        "query": query,
-        "entities": [],
-        "total": 0
-    }
+    try:
+        candidates = await graphrag_service._extract_key_entities(query)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Entity search failed: {e}") from e
+
+    entities = [{"name": name, "type": "Unknown"} for name in candidates[:limit]]
+    return {"query": query, "entities": entities, "total": len(entities)}
 
 
 @router.get("/suggestions")

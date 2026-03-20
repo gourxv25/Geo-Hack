@@ -2,7 +2,8 @@
 Application configuration settings
 """
 from pydantic_settings import BaseSettings
-from typing import Optional
+from pydantic import field_validator
+from typing import Optional, List
 from functools import lru_cache
 
 
@@ -29,6 +30,8 @@ class Settings(BaseSettings):
     
     # OpenAI
     OPENAI_API_KEY: str
+    OPENAI_MODEL: str = "gpt-4-turbo-preview"
+    OPENAI_MAX_TOKENS: int = 2000
     OPENAI_MODEL_GPT4: str = "gpt-4-turbo-preview"
     OPENAI_MODEL_GPT35: str = "gpt-3.5-turbo"
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
@@ -53,13 +56,74 @@ class Settings(BaseSettings):
     MAX_ARTICLES_PER_INGESTION: int = 100
     
     # GraphRAG Settings
+    GRAPHRAG_TOP_K: int = 5
+    GRAPHRAG_MAX_HOPS: int = 3
     MAX_CONTEXT_ENTITIES: int = 50
     MAX_CONTEXT_RELATIONS: int = 100
     MAX_HOPS: int = 3
     
     # API Settings
     API_PREFIX: str = "/api/v1"
-    CORS_ORIGINS: list = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+
+    @field_validator("DEBUG", mode="before")
+    @classmethod
+    def parse_debug_flag(cls, value):
+        """Allow loose DEBUG values from env files."""
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return True
+        value_str = str(value).strip().lower()
+        if value_str in {"1", "true", "yes", "on", "debug", "development"}:
+            return True
+        if value_str in {"0", "false", "no", "off", "release", "prod", "production"}:
+            return False
+        return True
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, value):
+        if isinstance(value, list):
+            return value
+        if value is None:
+            return ["http://localhost:3000", "http://127.0.0.1:3000"]
+        value_str = str(value).strip()
+        if "," in value_str:
+            return [origin.strip() for origin in value_str.split(",") if origin.strip()]
+        return [value_str] if value_str else ["http://localhost:3000", "http://127.0.0.1:3000"]
+
+    @property
+    def openai_api_key(self) -> str:
+        return self.OPENAI_API_KEY
+
+    @property
+    def openai_model(self) -> str:
+        return self.OPENAI_MODEL or self.OPENAI_MODEL_GPT4
+
+    @property
+    def openai_embedding_model(self) -> str:
+        return self.OPENAI_EMBEDDING_MODEL
+
+    @property
+    def openai_max_tokens(self) -> int:
+        return self.OPENAI_MAX_TOKENS
+
+    @property
+    def rss_feeds(self) -> List[str]:
+        return self.RSS_FEEDS
+
+    @property
+    def news_api_key(self) -> Optional[str]:
+        return self.NEWS_API_KEY
+
+    @property
+    def graphrag_top_k(self) -> int:
+        return self.GRAPHRAG_TOP_K
+
+    @property
+    def graphrag_max_hops(self) -> int:
+        return self.GRAPHRAG_MAX_HOPS
     
     class Config:
         env_file = ".env"

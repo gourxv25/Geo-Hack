@@ -55,15 +55,21 @@ class Neo4jClient:
     async def execute_query(
         self, 
         query: str, 
-        parameters: Optional[Dict[str, Any]] = None
+        parameters: Optional[Dict[str, Any]] = None,
+        **kwargs: Any
     ) -> List[Dict[str, Any]]:
         """Execute a Cypher query and return results"""
-        if parameters is None:
-            parameters = {}
+        params: Dict[str, Any] = {}
+        if parameters:
+            params.update(parameters)
+        if kwargs:
+            params.update(kwargs)
         
         try:
+            if not self.driver:
+                raise RuntimeError("Neo4j driver is not connected")
             async with self.driver.session(database=self.database) as session:
-                result = await session.run(query, parameters)
+                result = await session.run(query, params)
                 records = [record.data() async for record in result]
                 return records
         except Exception as e:
@@ -73,15 +79,21 @@ class Neo4jClient:
     async def execute_write(
         self, 
         query: str, 
-        parameters: Optional[Dict[str, Any]] = None
+        parameters: Optional[Dict[str, Any]] = None,
+        **kwargs: Any
     ) -> Any:
         """Execute a write transaction"""
-        if parameters is None:
-            parameters = {}
+        params: Dict[str, Any] = {}
+        if parameters:
+            params.update(parameters)
+        if kwargs:
+            params.update(kwargs)
         
         try:
+            if not self.driver:
+                raise RuntimeError("Neo4j driver is not connected")
             async with self.driver.session(database=self.database) as session:
-                result = await session.run(query, parameters)
+                result = await session.run(query, params)
                 summary = await result.consume()
                 return summary
         except Exception as e:

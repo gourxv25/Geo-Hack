@@ -42,7 +42,7 @@ class OntologyService:
         """Get entity by ID"""
         query = """
         MATCH (e:Entity)
-        WHERE e.name = $entity_id OR id(e) = $entity_id
+        WHERE e.name = $entity_id OR toString(id(e)) = $entity_id
         RETURN e, id(e) as node_id
         """
         result = await self.neo4j.execute_query(query, entity_id=str(entity_id))
@@ -91,8 +91,8 @@ class OntologyService:
         """Create a new relationship between entities"""
         query = """
         MATCH (source:Entity), (target:Entity)
-        WHERE id(source) = $source_id OR source.name = $source_id
-        WHERE id(target) = $target_id OR target.name = $target_id
+        WHERE (toString(id(source)) = $source_id OR source.name = $source_id)
+          AND (toString(id(target)) = $target_id OR target.name = $target_id)
         MERGE (source)-[r:RELATES {type: $type}]->(target)
         SET r += $properties,
             r.confidence = $confidence,
@@ -120,33 +120,44 @@ class OntologyService:
         limit: int = 50
     ) -> List[Dict[str, Any]]:
         """Get relationships for an entity"""
-        
+
+        entity_match = "(toString(id(e)) = $entity_id OR e.name = $entity_id)"
+        rel_filter = " AND r.type = $relationship_type" if relationship_type else ""
+
         if direction == "outgoing":
-            dir_query = "(e)-[r]->(target)"
+            query = f"""
+            MATCH (e:Entity)-[r]->(target:Entity)
+            WHERE {entity_match}{rel_filter}
+            RETURN e as source, r, target, id(r) as rel_id
+            LIMIT $limit
+            """
         elif direction == "incoming":
-            dir_query = "(source)-[r]->(e)"
+            query = f"""
+            MATCH (source:Entity)-[r]->(e:Entity)
+            WHERE {entity_match}{rel_filter}
+            RETURN source, r, e as target, id(r) as rel_id
+            LIMIT $limit
+            """
         else:
-            dir_query = "(e)-[r]->(target), (source)-[r2]->(e)"
-        
-        query = f"""
-        MATCH {dir_query}
-        WHERE id(e) = $entity_id OR e.name = $entity_id
-        """
-        
+            query = f"""
+            MATCH (e:Entity)-[r]->(target:Entity)
+            WHERE {entity_match}{rel_filter}
+            RETURN e as source, r, target, id(r) as rel_id
+            UNION
+            MATCH (source:Entity)-[r]->(e:Entity)
+            WHERE {entity_match}{rel_filter}
+            RETURN source, r, e as target, id(r) as rel_id
+            LIMIT $limit
+            """
+
+        params = {
+            "entity_id": str(entity_id),
+            "limit": limit,
+        }
         if relationship_type:
-            query += " AND r.type = $relationship_type"
-        
-        query += """
-        RETURN source, r, target, id(r) as rel_id
-        LIMIT $limit
-        """
-        
-        results = await self.neo4j.execute_query(
-            query,
-            entity_id=str(entity_id),
-            relationship_type=relationship_type,
-            limit=limit
-        )
+            params["relationship_type"] = relationship_type
+
+        results = await self.neo4j.execute_query(query, params)
         
         relationships = []
         for row in results:
@@ -172,7 +183,7 @@ class OntologyService:
         # Get connected nodes at specified depth
         query = f"""
         MATCH path = (e:Entity)-[r*1..{depth}]->(connected)
-        WHERE id(e) = $entity_id OR e.name = $entity_id
+        WHERE toString(id(e)) = $entity_id OR e.name = $entity_id
         WITH nodes(path) as nodes, relationships(path) as rels
         UNWIND nodes as n
         UNWIND rels as r
@@ -253,7 +264,7 @@ class OntologyService:
         
         query = """
         MATCH (e:Entity)-[r]->(related:Entity)
-        WHERE id(e) = $entity_id OR e.name = $entity_id
+        WHERE toString(id(e)) = $entity_id OR e.name = $entity_id
         """
         
         if types:
@@ -286,7 +297,7 @@ class OntologyService:
         
         query = """
         MATCH (e:Entity)
-        WHERE id(e) = $entity_id OR e.name = $entity_id
+        WHERE toString(id(e)) = $entity_id OR e.name = $entity_id
         DETACH DELETE e
         RETURN count(e) as deleted
         """

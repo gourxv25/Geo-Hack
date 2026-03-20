@@ -35,7 +35,7 @@ function App() {
 
   const fetchSystemStatus = async () => {
     try {
-      const response = await fetch('/api/health');
+      const response = await fetch('/api/v1/health');
       const data = await response.json();
       setSystemStatus(data);
     } catch (error) {
@@ -91,7 +91,7 @@ function App() {
               <span>System {systemStatus.status}</span>
             </div>
             <div className="status-item">
-              <span>Entities: {systemStatus.database?.nodes || 'N/A'}</span>
+              <span>Neo4j: {systemStatus.services?.neo4j || 'N/A'}</span>
             </div>
           </div>
         )}
