@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from dateutil import parser as date_parser
 from fastapi import APIRouter, HTTPException
+from loguru import logger
 from pydantic import BaseModel
 
 from app.config import settings
@@ -111,8 +112,10 @@ async def trigger_ingestion():
     Manually trigger news ingestion
     """
     try:
+        logger.info("Manual ingestion trigger requested via /ingestion/trigger")
         result = await _refresh_articles()
     except Exception as e:
+        logger.error(f"Manual ingestion trigger failed: {e}")
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {e}") from e
 
     return {
@@ -120,6 +123,31 @@ async def trigger_ingestion():
         "task_id": f"ingest-{uuid4()}",
         "articles_ingested": result.get("unique_articles", 0),
     }
+
+
+@router.post("/trigger-ingestion")
+async def trigger_ingestion_debug(limit_per_source: int = 5):
+    """
+    Debug endpoint to manually run ingestion with a small limit.
+    """
+    logger.info(
+        f"Manual debug ingestion trigger requested via /trigger-ingestion "
+        f"(limit_per_source={limit_per_source})"
+    )
+    try:
+        result = await news_ingestor.ingest_all(limit_per_source=limit_per_source)
+        return {
+            "message": "Debug ingestion completed",
+            "limit_per_source": limit_per_source,
+            "total_articles": result.get("total_articles", 0),
+            "unique_articles": result.get("unique_articles", 0),
+            "persisted_to_neo4j": result.get("persisted_to_neo4j", 0),
+            "sources": result.get("sources", []),
+            "source_failures": result.get("source_failures", {}),
+        }
+    except Exception as e:
+        logger.error(f"Debug ingestion trigger failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Debug ingestion failed: {e}") from e
 
 
 @router.get("/sources", response_model=List[NewsSource])
@@ -229,6 +257,7 @@ async def _load_or_refresh_articles() -> List[Dict[str, Any]]:
 
 
 async def _refresh_articles() -> Dict[str, Any]:
+    logger.info("News refresh started")
     await redis_client.set(
         NEWS_STATUS_KEY,
         {"status": "running", "last_run": datetime.utcnow().isoformat(), "articles_ingested": 0},
@@ -236,6 +265,11 @@ async def _refresh_articles() -> Dict[str, Any]:
     )
     ingestion = await news_ingestor.ingest_all(limit_per_source=30)
     normalized = [_normalize_article(article) for article in ingestion.get("articles", [])]
+    logger.info(
+        "News refresh fetched "
+        f"{ingestion.get('unique_articles', 0)} unique articles "
+        f"and persisted {ingestion.get('persisted_to_neo4j', 0)} to Neo4j"
+    )
 
     await redis_client.set(NEWS_CACHE_KEY, normalized, expire=NEWS_CACHE_TTL_SECONDS)
     await redis_client.set(
@@ -262,6 +296,7 @@ async def _refresh_articles() -> Dict[str, Any]:
         pass
 
     ingestion["articles"] = normalized
+    logger.info("News refresh completed")
     return ingestion
 
 

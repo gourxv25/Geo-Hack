@@ -11,6 +11,7 @@ from app.api import api_router
 from app.database.neo4j_client import neo4j_client
 from app.database.postgres_client import postgres_client
 from app.database.redis_client import redis_client
+from app.ingestion.news_ingestor import news_ingestor
 
 
 @asynccontextmanager
@@ -37,6 +38,22 @@ async def lifespan(app: FastAPI):
         logger.info("Redis connection established")
     except Exception as e:
         logger.error(f"Failed to connect to Redis: {e}")
+
+    if settings.startup_ingestion_enabled:
+        try:
+            logger.info(
+                f"Startup ingestion enabled (limit={settings.startup_ingestion_limit}); running ingestion"
+            )
+            ingestion_result = await news_ingestor.ingest_all(
+                limit_per_source=settings.startup_ingestion_limit
+            )
+            logger.info(
+                "Startup ingestion finished: "
+                f"unique_articles={ingestion_result.get('unique_articles', 0)}, "
+                f"persisted_to_neo4j={ingestion_result.get('persisted_to_neo4j', 0)}"
+            )
+        except Exception as e:
+            logger.error(f"Startup ingestion failed: {e}")
     
     logger.info("Application startup complete")
     

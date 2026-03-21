@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     # Data Ingestion Settings
     INGESTION_INTERVAL_MINUTES: int = 30
     MAX_ARTICLES_PER_INGESTION: int = 100
+    STARTUP_INGESTION_ENABLED: bool = True
+    STARTUP_INGESTION_LIMIT: int = 5
     
     # GraphRAG Settings
     GRAPHRAG_TOP_K: int = 5
@@ -124,6 +126,14 @@ class Settings(BaseSettings):
     @property
     def graphrag_max_hops(self) -> int:
         return self.GRAPHRAG_MAX_HOPS
+
+    @property
+    def startup_ingestion_enabled(self) -> bool:
+        return self.STARTUP_INGESTION_ENABLED
+
+    @property
+    def startup_ingestion_limit(self) -> int:
+        return self.STARTUP_INGESTION_LIMIT
     
     class Config:
         env_file = ".env"

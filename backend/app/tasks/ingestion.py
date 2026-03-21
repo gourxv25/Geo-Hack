@@ -1,11 +1,12 @@
 """
 News Ingestion Tasks
 """
-import feedparser
-import requests
-from datetime import datetime
-from typing import List, Dict, Any
+import asyncio
+from typing import Dict, Any
+from loguru import logger
+
 from app.tasks.celery_app import celery_app
+from app.ingestion.news_ingestor import news_ingestor
 
 
 @celery_app.task(name='app.tasks.ingestion.ingest_news')
@@ -13,38 +14,29 @@ def ingest_news(limit: int = 50) -> Dict[str, Any]:
     """
     Ingest news from RSS feeds and NewsAPI
     """
-    # TODO: Implement actual RSS feed parsing
-    # TODO: Implement NewsAPI integration
-    # TODO: Implement article storage in PostgreSQL
-    
-    articles = []
-    
-    # Example RSS feeds (configured in settings)
-    rss_feeds = [
-        'https://feeds.bbci.co.uk/news/world/rss.xml',
-        'https://www.reutersagency.com/feed/?taxonomy=best-topics',
-    ]
-    
-    for feed_url in rss_feeds:
-        try:
-            feed = feedparser.parse(feed_url)
-            for entry in feed.entries[:limit]:
-                article = {
-                    'title': entry.get('title', ''),
-                    'summary': entry.get('summary', ''),
-                    'url': entry.get('link', ''),
-                    'published_at': entry.get('published', ''),
-                    'source': feed.feed.get('title', 'Unknown'),
-                }
-                articles.append(article)
-        except Exception as e:
-            print(f"Error parsing feed {feed_url}: {e}")
-    
-    return {
-        'status': 'completed',
-        'articles_ingested': len(articles),
-        'feeds_processed': len(rss_feeds),
-    }
+    logger.info(f"Celery ingestion task started (limit={limit})")
+    try:
+        result = asyncio.run(news_ingestor.ingest_all(limit_per_source=limit))
+        logger.info(
+            "Celery ingestion task completed: "
+            f"unique_articles={result.get('unique_articles', 0)}, "
+            f"persisted_to_neo4j={result.get('persisted_to_neo4j', 0)}"
+        )
+        return {
+            "status": "completed",
+            "articles_ingested": result.get("unique_articles", 0),
+            "persisted_to_neo4j": result.get("persisted_to_neo4j", 0),
+            "sources": result.get("sources", []),
+            "ingested_at": result.get("ingested_at"),
+        }
+    except Exception as e:
+        logger.error(f"Celery ingestion task failed: {e}")
+        return {
+            "status": "error",
+            "articles_ingested": 0,
+            "persisted_to_neo4j": 0,
+            "error": str(e),
+        }
 
 
 @celery_app.task(name='app.tasks.ingestion.fetch_article_content')

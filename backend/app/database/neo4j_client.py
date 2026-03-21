@@ -181,6 +181,58 @@ class Neo4jClient:
         result = await self.execute_query(query, {"node_id": node_id})
         return result
 
+    async def create_article_graph(self, article: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Create or update article graph nodes and relationships."""
+        categories = article.get("categories") or []
+        if not isinstance(categories, list):
+            categories = []
+
+        query = """
+        MERGE (a:Article {url: $url})
+        ON CREATE SET a.created_at = datetime()
+        SET a.title = $title,
+            a.summary = $summary,
+            a.content = $content,
+            a.source = $source,
+            a.author = $author,
+            a.image_url = $image_url,
+            a.published_at = $published_at,
+            a.ingested_at = $ingested_at,
+            a.status = $status,
+            a.updated_at = datetime()
+        MERGE (s:Source {name: $source})
+        ON CREATE SET s.created_at = datetime()
+        SET s.last_seen_at = datetime()
+        MERGE (a)-[pub:PUBLISHED_BY]->(s)
+        ON CREATE SET pub.created_at = datetime()
+        SET pub.last_seen_at = datetime()
+        WITH a
+        FOREACH (cat IN $categories |
+            MERGE (c:Category {name: cat})
+            ON CREATE SET c.created_at = datetime()
+            MERGE (a)-[:IN_CATEGORY]->(c)
+        )
+        RETURN id(a) AS article_id, a.url AS url, a.title AS title
+        """
+
+        result = await self.execute_query(
+            query,
+            {
+                "url": article.get("url"),
+                "title": article.get("title", "Untitled"),
+                "summary": article.get("summary", ""),
+                "content": article.get("content"),
+                "source": article.get("source", "Unknown"),
+                "author": article.get("author"),
+                "image_url": article.get("image_url"),
+                "published_at": article.get("published_at"),
+                "ingested_at": article.get("ingested_at"),
+                "status": article.get("status", "pending"),
+                "categories": categories,
+            },
+        )
+        return result[0] if result else None
+
 
 # Global Neo4j client instance
 neo4j_client = Neo4jClient()
