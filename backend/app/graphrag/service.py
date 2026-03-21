@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional
 from openai import AsyncOpenAI
 from app.config import settings
 from app.ontology.ontology_service import ontology_service
+from app.vectorstore import chroma_service
 
 
 class GraphRAGService:
@@ -26,12 +27,30 @@ class GraphRAGService:
         
         # Step 2: Retrieve relevant subgraph from knowledge graph
         context_data = await self._retrieve_context(key_entities)
+
+        # Step 2b: Retrieve similar semantic context from vector store
+        try:
+            vector_hits = await chroma_service.similarity_search(question, k=self.top_k)
+        except Exception:
+            vector_hits = []
+        context_data["vector_hits"] = vector_hits
         
         # Step 3: Generate answer using LLM with graph context
         answer_data = await self._generate_answer(question, context_data)
         
         # Step 4: Build reasoning chain
         reasoning_chain = self._build_reasoning_chain(key_entities, context_data)
+
+        sources = answer_data.get("sources", [])
+        if not sources:
+            sources = [
+                {
+                    "type": "vector",
+                    "reference": hit.get("metadata", {}).get("source", "vector_context"),
+                    "score": hit.get("score", 0.0),
+                }
+                for hit in vector_hits
+            ]
         
         return {
             'question': question,
@@ -40,6 +59,8 @@ class GraphRAGService:
             'reasoning_chain': reasoning_chain,
             'supporting_facts': answer_data['supporting_facts'],
             'related_entities': context_data.get('entities', []),
+            'relationships': context_data.get('relationships', []),
+            'sources': sources,
         }
     
     async def _extract_key_entities(self, question: str) -> List[str]:
@@ -108,6 +129,29 @@ Example output: ["United States", "NATO", "China"]"""
                 depth=self.max_hops,
                 limit=50
             )
+
+        vector_texts = []
+        vector_metadata = []
+        for entity in all_entities[:20]:
+            name = entity.get("name", "Unknown")
+            entity_type = entity.get("type", "Unknown")
+            vector_texts.append(f"Entity: {name} ({entity_type})")
+            vector_metadata.append({"source": "neo4j_entity", "name": name, "type": entity_type})
+
+        for rel in all_relationships[:20]:
+            source_name = rel.get("source", {}).get("name", "?")
+            target_name = rel.get("target", {}).get("name", "?")
+            rel_type = rel.get("type", "related")
+            vector_texts.append(f"Relationship: {source_name} {rel_type} {target_name}")
+            vector_metadata.append(
+                {"source": "neo4j_relationship", "type": rel_type, "from": source_name, "to": target_name}
+            )
+
+        if vector_texts:
+            try:
+                await chroma_service.add_documents(vector_texts, vector_metadata)
+            except Exception:
+                pass
         
         return {
             'entities': all_entities[:20],  # Limit context size
@@ -140,6 +184,13 @@ Example output: ["United States", "NATO", "China"]"""
                 for r in context_data['relationships'][:10]
             ])
             context_parts.append(f"Relationships:\n{rel_info}")
+
+        if context_data.get("vector_hits"):
+            vector_info = "\n".join([
+                f"- {hit.get('text', '')[:220]} (score={round(float(hit.get('score', 0.0)), 3)})"
+                for hit in context_data["vector_hits"][:5]
+            ])
+            context_parts.append(f"Semantic Vector Context:\n{vector_info}")
         
         context = "\n\n".join(context_parts) if context_parts else "No relevant data found in knowledge graph."
         
@@ -159,6 +210,9 @@ Provide your answer in JSON format with:
   "confidence": 0.0-1.0,
   "supporting_facts": [
     {{"entity": "entity name", "relation": "relationship", "target": "target", "source": "source"}}
+  ],
+  "sources": [
+    {{"type": "graph|vector|external", "reference": "source identifier", "score": 0.0-1.0}}
   ]
 }}"""
         
@@ -182,7 +236,8 @@ Provide your answer in JSON format with:
             return {
                 'answer': 'I encountered an error while processing your question. Please try again.',
                 'confidence': 0.0,
-                'supporting_facts': []
+                'supporting_facts': [],
+                'sources': []
             }
     
     def _build_reasoning_chain(
@@ -208,6 +263,9 @@ Provide your answer in JSON format with:
             chain.append("Synthesized context from entity relationships")
         else:
             chain.append("No graph data found, using general knowledge")
+
+        vector_hits = len(context_data.get("vector_hits", []))
+        chain.append(f"Retrieved {vector_hits} semantic matches from vector context")
         
         # Step 4: Answer generation
         chain.append("Generated answer using LLM with graph context")

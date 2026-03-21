@@ -4,6 +4,7 @@ Ontology API Endpoints - Knowledge Graph Management
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
+from app.ontology import ontology_service
 
 router = APIRouter()
 
@@ -50,31 +51,17 @@ async def get_graph_stats():
     """
     Get knowledge graph statistics
     """
-    # TODO: Implement real statistics from Neo4j
+    try:
+        stats = await ontology_service.get_graph_statistics()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch graph statistics: {e}") from e
+
     return GraphStats(
-        total_nodes=15000,
-        total_relationships=45000,
-        entity_types={
-            "Country": 195,
-            "Organization": 850,
-            "Company": 2500,
-            "Individual": 5000,
-            "System": 1200,
-            "Event": 5255
-        },
-        relationship_types={
-            "alliesWith": 450,
-            "tradesWith": 2800,
-            "sanctions": 120,
-            "supplies": 1500,
-            "dependsOn": 3200,
-            "competesWith": 890,
-            "influences": 2100,
-            "locatedIn": 4500,
-            "partOf": 3800,
-            "occurredIn": 5255
-        },
-        last_updated="2024-01-15T10:30:00Z"
+        total_nodes=stats.get("total_nodes", 0),
+        total_relationships=stats.get("total_relationships", 0),
+        entity_types=stats.get("entity_types", {}),
+        relationship_types=stats.get("relationship_types", {}),
+        last_updated=stats.get("last_updated", ""),
     )
 
 

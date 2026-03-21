@@ -8,6 +8,7 @@ from time import perf_counter
 
 from app.graphrag import graphrag_service
 from app.insights import insights_service
+from app.ontology import ontology_service
 
 router = APIRouter()
 
@@ -106,10 +107,10 @@ async def query_ontology(request: QueryRequest):
             data_sources=["knowledge_graph", "llm_generation"],
         ),
         entities=entities,
-        relationships=[],
+        relationships=rag_result.get("relationships", []),
         impact_map=map_data,
         risk_analysis=risk_data,
-        sources=[],
+        sources=rag_result.get("sources", []),
         query_time_ms=round(elapsed_ms, 2),
     )
 
@@ -130,11 +131,47 @@ async def search_entities(query: str, limit: int = 10):
 
 @router.get("/suggestions")
 async def get_query_suggestions(prefix: str, limit: int = 5):
-    """
-    Get query suggestions based on prefix
-    """
-    # TODO: Implement query suggestions
-    return {
-        "prefix": prefix,
-        "suggestions": []
-    }
+    """Get query suggestions based on prefix"""
+    try:
+        # Step 1: Fetch matching entities from ontology service
+        entities = await ontology_service.search_entities(
+            query=prefix,
+            limit=limit
+        )
+
+        # Step 2: Generate suggestions using templates
+        suggestions = []
+
+        templates = {
+            "Country": "What is the current risk level for {name}?",
+            "Organization": "What is {name}'s role in global affairs?",
+            "Individual": "Tell me about {name}'s influence.",
+            "Event": "What are the implications of {name}?",
+            "Location": "What risks are associated with {name}?"
+        }
+
+        for entity in entities:
+            entity_type = entity.get("type", "Unknown")
+            name = entity.get("name", "")
+
+            if not name:
+                continue
+
+            template = templates.get(
+                entity_type,
+                "Tell me about {name}."
+            )
+
+            suggestions.append(template.format(name=name))
+
+        return {
+            "success": True,
+            "suggestions": suggestions
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "suggestions": [],
+            "error": str(e)
+        }

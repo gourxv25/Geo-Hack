@@ -6,25 +6,44 @@ from typing import List, Dict, Any, Optional
 from openai import AsyncOpenAI
 from app.config import settings
 
+try:
+    import spacy
+except Exception:  # pragma: no cover - optional runtime availability
+    spacy = None
+
 
 class NLPService:
-    """Service for NLP operations using OpenAI"""
+    """Service for NLP operations using spaCy + OpenAI enrichment."""
     
     def __init__(self):
         self.client = AsyncOpenAI(api_key=settings.openai_api_key)
         self.model = settings.openai_model
         self.max_tokens = settings.openai_max_tokens
+        self._spacy_nlp = None
+        if spacy is not None:
+            for model_name in ("en_core_web_lg", "en_core_web_sm"):
+                try:
+                    self._spacy_nlp = spacy.load(model_name)
+                    break
+                except Exception:
+                    continue
     
     async def extract_entities(self, text: str) -> List[Dict[str, Any]]:
-        """Extract named entities from text using GPT-4"""
+        """Extract entities with spaCy base pass and OpenAI enrichment."""
+        base_entities = self._extract_entities_spacy(text)
         
-        prompt = f"""Extract named entities from the following text. 
+        prompt = f"""Extract named entities from the following text.
+Use the spaCy candidates as a starting point, deduplicate and enrich type/category.
+
 For each entity, identify:
 1. name: The entity name
 2. type: The entity type (Country, Organization, Company, Individual, System, Event, Location, Resource)
 3. category: The domain category (Geopolitical, Economic, Defense, Technology, Climate, Energy, Health, Social)
 
 Return a JSON array of entities found.
+
+spaCy candidates:
+{json.dumps(base_entities, ensure_ascii=True)}
 
 Text:
 {text[:3000]}  # Limit text length
@@ -54,11 +73,13 @@ Expected output format:
             if isinstance(entities, dict) and 'entities' in entities:
                 entities = entities['entities']
             
-            return entities if isinstance(entities, list) else []
+            if isinstance(entities, list) and entities:
+                return entities
+            return base_entities
             
         except Exception as e:
             print(f"Error extracting entities: {e}")
-            return []
+            return base_entities
     
     async def extract_relations(
         self, 
@@ -179,6 +200,43 @@ Text:
         except Exception as e:
             print(f"Error generating embedding: {e}")
             return []
+
+    def _extract_entities_spacy(self, text: str) -> List[Dict[str, Any]]:
+        """Extract base entities from spaCy when available."""
+        if not self._spacy_nlp or not text:
+            return []
+
+        label_map = {
+            "GPE": ("Country", "Geopolitical"),
+            "LOC": ("Location", "Geopolitical"),
+            "ORG": ("Organization", "Economic"),
+            "PERSON": ("Individual", "Social"),
+            "EVENT": ("Event", "Geopolitical"),
+            "PRODUCT": ("System", "Technology"),
+        }
+
+        doc = self._spacy_nlp(text[:5000])
+        seen = set()
+        entities: List[Dict[str, Any]] = []
+        for ent in doc.ents:
+            name = ent.text.strip()
+            if not name:
+                continue
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+
+            mapped_type, mapped_category = label_map.get(ent.label_, ("Organization", "Economic"))
+            entities.append(
+                {
+                    "name": name,
+                    "type": mapped_type,
+                    "category": mapped_category,
+                }
+            )
+
+        return entities
 
 
 # Singleton instance

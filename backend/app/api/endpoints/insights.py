@@ -1,16 +1,20 @@
 """
 Insights API Endpoints - Real-time Analytics and Risk Analysis
 """
-from fastapi import APIRouter
-from pydantic import BaseModel
-from typing import List, Dict, Any, Optional
 from datetime import datetime
+from typing import List, Dict, Any, Optional
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
+from app.insights import insights_service
 
 router = APIRouter()
 
 
 class RiskCategory(BaseModel):
     """Risk category model"""
+
     name: str
     score: float
     trend: str  # increasing, decreasing, stable
@@ -19,6 +23,7 @@ class RiskCategory(BaseModel):
 
 class CountryImpact(BaseModel):
     """Country impact model"""
+
     name: str
     code: str  # ISO country code
     impact_score: float
@@ -29,6 +34,7 @@ class CountryImpact(BaseModel):
 
 class TrendData(BaseModel):
     """Trend data point"""
+
     date: str
     value: float
     label: Optional[str] = None
@@ -36,6 +42,7 @@ class TrendData(BaseModel):
 
 class InsightResponse(BaseModel):
     """Insight response model"""
+
     generated_at: str
     summary: str
     key_findings: List[str]
@@ -53,78 +60,62 @@ async def get_insights(
 ):
     """
     Get real-time strategic insights
-    
-    Returns comprehensive analysis including:
-    - Key findings summary
-    - Risk analysis by category
-    - Country-wise impact data for map visualization
-    - Trending entities and emerging events
     """
-    # TODO: Implement real-time insights generation
+    try:
+        risk_analysis = await insights_service.get_risk_analysis(
+            category=domain,
+            region=region
+        )
+        map_data = await insights_service.get_map_data()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Insights generation failed: {e}") from e
+
+    countries = map_data.get("countries", [])
+    country_impacts = [
+        CountryImpact(
+            name=item.get("country", "Unknown"),
+            code=item.get("code", "UNK"),
+            impact_score=float(item.get("impact", 0.0)),
+            impact_type=item.get("risk", "low"),
+            affected_sectors=item.get("categories", []),
+            recent_events=int(item.get("recent_events", 0)),
+        )
+        for item in countries[:20]
+    ]
+
+    categories = risk_analysis.get("categories", [])
+    key_findings = [
+        f"{entry.get('category', 'Unknown')} risk at {entry.get('level', 0)}%"
+        for entry in categories[:5]
+    ]
+
+    trending_entities = [
+        {
+            "name": item.get("country", "Unknown"),
+            "type": "Country",
+            "mentions": int(item.get("recent_events", 0)),
+            "trend": "up" if item.get("impact", 0) >= 60 else "stable",
+        }
+        for item in countries[:10]
+    ]
+
+    emerging_events = [
+        {
+            "title": f"{entry.get('category', 'Unknown')} pressure shift",
+            "severity": "high" if entry.get("level", 0) >= 70 else "medium",
+            "date": datetime.utcnow().date().isoformat(),
+        }
+        for entry in categories[:5]
+    ]
+
     return InsightResponse(
         generated_at=datetime.utcnow().isoformat(),
-        summary="Global stability index has decreased by 2.3% this week due to escalating tensions in multiple regions.",
-        key_findings=[
-            "Trade tensions between major economies continue to affect global supply chains",
-            "Technology sector faces increased regulatory scrutiny worldwide",
-            "Climate-related events impacting agricultural production in key regions"
-        ],
-        risk_analysis={
-            "overall_risk": "medium",
-            "risk_score": 0.65,
-            "categories": [
-                RiskCategory(
-                    name="Geopolitical",
-                    score=0.72,
-                    trend="increasing",
-                    description="Regional conflicts and diplomatic tensions rising"
-                ),
-                RiskCategory(
-                    name="Economic",
-                    score=0.58,
-                    trend="stable",
-                    description="Mixed signals from global markets"
-                ),
-                RiskCategory(
-                    name="Technology",
-                    score=0.45,
-                    trend="decreasing",
-                    description="Regulatory pressures easing in some regions"
-                ),
-                RiskCategory(
-                    name="Climate",
-                    score=0.80,
-                    trend="increasing",
-                    description="Extreme weather events increasing in frequency"
-                )
-            ]
-        },
-        country_impacts=[
-            CountryImpact(
-                name="United States",
-                code="USA",
-                impact_score=0.75,
-                impact_type="high",
-                affected_sectors=["Technology", "Finance", "Defense"],
-                recent_events=12
-            ),
-            CountryImpact(
-                name="China",
-                code="CHN",
-                impact_score=0.82,
-                impact_type="high",
-                affected_sectors=["Technology", "Manufacturing", "Trade"],
-                recent_events=18
-            )
-        ],
-        trending_entities=[
-            {"name": "NATO", "type": "Organization", "mentions": 245, "trend": "up"},
-            {"name": "Semiconductor Industry", "type": "Sector", "mentions": 189, "trend": "up"}
-        ],
-        emerging_events=[
-            {"title": "Trade Agreement Negotiations", "severity": "medium", "date": "2024-01-15"},
-            {"title": "Climate Summit Announced", "severity": "low", "date": "2024-01-14"}
-        ]
+        summary=f"Generated strategic snapshot for {timeframe} with {len(categories)} active risk categories.",
+        key_findings=key_findings,
+        risk_analysis=risk_analysis,
+        country_impacts=country_impacts,
+        trending_entities=trending_entities,
+        emerging_events=emerging_events,
     )
 
 
@@ -135,26 +126,28 @@ async def get_risk_analysis(
 ):
     """
     Get detailed risk analysis
-    
-    Returns risk metrics by category with historical trends
     """
-    # TODO: Implement detailed risk analysis
+    try:
+        result = await insights_service.get_risk_analysis(category=category)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Risk analysis failed: {e}") from e
+
     return {
-        "overall_risk_score": 0.65,
-        "risk_level": "medium",
+        "overall_risk_score": result.get("overall_risk", {}).get("score", 0),
+        "risk_level": result.get("overall_risk", {}).get("level", "low"),
         "categories": {
-            "geopolitical": {"score": 0.72, "trend": "increasing"},
-            "economic": {"score": 0.58, "trend": "stable"},
-            "defense": {"score": 0.68, "trend": "increasing"},
-            "technology": {"score": 0.45, "trend": "decreasing"},
-            "climate": {"score": 0.80, "trend": "increasing"},
-            "society": {"score": 0.52, "trend": "stable"}
+            item.get("category", "").lower(): {
+                "score": item.get("level", 0) / 100,
+                "trend": (
+                    "increasing" if item.get("trend") == "up"
+                    else "decreasing" if item.get("trend") == "down"
+                    else "stable"
+                ),
+            }
+            for item in result.get("categories", [])
         },
-        "historical_trend": [
-            {"date": "2024-01-01", "score": 0.60},
-            {"date": "2024-01-08", "score": 0.62},
-            {"date": "2024-01-15", "score": 0.65}
-        ]
+        "historical_trend": result.get("trends", {}).get("weekly", []),
+        "full": result if detailed else None,
     }
 
 
@@ -165,30 +158,31 @@ async def get_map_data(
 ):
     """
     Get data for world map visualization
-    
-    Returns country-wise metrics for animated map display
     """
-    # TODO: Implement map data generation
+    try:
+        data = await insights_service.get_map_data()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Map data generation failed: {e}") from e
+
     return {
         "metric": metric,
         "timeframe": timeframe,
         "countries": [
-            {"code": "USA", "name": "United States", "value": 0.75, "events": 12},
-            {"code": "CHN", "name": "China", "value": 0.82, "events": 18},
-            {"code": "RUS", "name": "Russia", "value": 0.88, "events": 25},
-            {"code": "GBR", "name": "United Kingdom", "value": 0.45, "events": 8},
-            {"code": "DEU", "name": "Germany", "value": 0.52, "events": 10},
-            {"code": "FRA", "name": "France", "value": 0.48, "events": 7},
-            {"code": "IND", "name": "India", "value": 0.55, "events": 14},
-            {"code": "JPN", "name": "Japan", "value": 0.42, "events": 6},
-            {"code": "AUS", "name": "Australia", "value": 0.35, "events": 4},
-            {"code": "BRA", "name": "Brazil", "value": 0.38, "events": 5}
+            {
+                "code": item.get("code", "UNK"),
+                "name": item.get("country", "Unknown"),
+                "value": item.get("impact", 0),
+                "events": item.get("recent_events", 0),
+                "lat": item.get("lat", 0.0),
+                "lng": item.get("lng", 0.0),
+            }
+            for item in data.get("countries", [])
         ],
         "legend": {
             "high": {"min": 0.7, "color": "#ff4444"},
             "medium": {"min": 0.4, "color": "#ffaa00"},
-            "low": {"min": 0, "color": "#44aa44"}
-        }
+            "low": {"min": 0, "color": "#44aa44"},
+        },
     }
 
 
@@ -200,15 +194,24 @@ async def get_trends(
     """
     Get trending entities and topics
     """
-    # TODO: Implement trend analysis
+    data = await insights_service.get_risk_analysis(category=entity_type)
+    categories = data.get("categories", [])
     return {
         "trending_entities": [
-            {"name": "NATO", "type": "Organization", "mentions": 245, "change": 15.2},
-            {"name": "Semiconductor", "type": "Technology", "mentions": 189, "change": 8.5},
-            {"name": "Climate Summit", "type": "Event", "mentions": 156, "change": 22.1}
+            {
+                "name": item.get("category", "Unknown"),
+                "type": "RiskCategory",
+                "mentions": int(item.get("level", 0)),
+                "change": int(item.get("level", 0)) - 50,
+            }
+            for item in categories[:limit]
         ],
         "emerging_topics": [
-            {"topic": "AI Regulation", "growth": 45.2, "sentiment": "neutral"},
-            {"topic": "Supply Chain Resilience", "growth": 32.1, "sentiment": "negative"}
-        ]
+            {
+                "topic": item.get("category", "Unknown"),
+                "growth": int(item.get("level", 0)),
+                "sentiment": "negative" if item.get("level", 0) > 60 else "neutral",
+            }
+            for item in categories[:limit]
+        ],
     }

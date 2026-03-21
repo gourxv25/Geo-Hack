@@ -3,11 +3,30 @@ Insights Service - Real-time Risk Analysis and Analytics
 """
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
+from dateutil import parser as date_parser
 from app.ontology.ontology_service import ontology_service
 
 
 class InsightsService:
     """Service for generating real-time insights and risk analysis"""
+    DOMAIN_WEIGHTS = {
+        "geopolitical": 0.90,
+        "economic": 0.72,
+        "defense": 0.85,
+        "technology": 0.68,
+        "climate": 0.60,
+        "energy": 0.65,
+        "social": 0.52,
+    }
+    CATEGORY_CONFIG = [
+        {"name": "Geopolitical", "key": "geopolitical", "entity_type": "Country"},
+        {"name": "Economic", "key": "economic", "entity_type": "Organization"},
+        {"name": "Defense", "key": "defense", "entity_type": "System"},
+        {"name": "Technology", "key": "technology", "entity_type": "System"},
+        {"name": "Climate", "key": "climate", "entity_type": "Event"},
+        {"name": "Energy", "key": "energy", "entity_type": "Resource"},
+        {"name": "Social", "key": "social", "entity_type": "Individual"},
+    ]
     
     async def get_risk_analysis(
         self, 
@@ -16,14 +35,11 @@ class InsightsService:
     ) -> Dict[str, Any]:
         """Get risk analysis by category and/or region"""
         
-        # Get graph statistics
-        stats = await ontology_service.get_graph_statistics()
-        
         # Calculate risk scores based on entity relationships
         risk_scores = await self._calculate_risk_scores(category, region)
         
         # Get trends
-        trends = await self._calculate_trends()
+        trends = await self._calculate_trends(risk_scores)
         
         return {
             'overall_risk': self._calculate_overall_risk(risk_scores),
@@ -38,51 +54,78 @@ class InsightsService:
         region: Optional[str]
     ) -> List[Dict[str, Any]]:
         """Calculate risk scores for different categories"""
-        
-        # Risk categories with default scores
-        base_scores = [
-            {'category': 'Geopolitical', 'level': 68, 'trend': 'up', 
-             'factors': ['NATO expansion', 'US-China tensions', 'Regional conflicts']},
-            {'category': 'Economic', 'level': 62, 'trend': 'stable',
-             'factors': ['Inflation concerns', 'Trade disputes', 'Currency fluctuations']},
-            {'category': 'Defense', 'level': 75, 'trend': 'up',
-             'factors': ['Military modernization', 'Arms race', 'Strategic competition']},
-            {'category': 'Technology', 'level': 70, 'trend': 'up',
-             'factors': ['AI competition', 'Semiconductor shortage', 'Cybersecurity threats']},
-            {'category': 'Climate', 'level': 58, 'trend': 'down',
-             'factors': ['Extreme weather', 'Energy transition', 'Resource scarcity']},
-            {'category': 'Energy', 'level': 65, 'trend': 'stable',
-             'factors': ['Oil prices', 'Renewable transition', 'Grid stability']},
-            {'category': 'Social', 'level': 52, 'trend': 'stable',
-             'factors': ['Political polarization', 'Migration', 'Public health']},
-        ]
-        
+        stats = await ontology_service.get_graph_statistics()
+        total_nodes = max(stats.get("total_nodes", 0), 1)
+        total_relationships = max(stats.get("total_relationships", 0), 0)
+        density_raw = total_relationships / max(total_nodes * (total_nodes - 1), 1)
+        relationship_density = min(density_raw * 1000, 1.0)
+
+        categories = self.CATEGORY_CONFIG
         if category:
-            base_scores = [s for s in base_scores if s['category'] == category]
-        
-        return base_scores
+            categories = [
+                c for c in categories
+                if c["name"].lower() == category.lower() or c["key"] == category.lower()
+            ]
+
+        results: List[Dict[str, Any]] = []
+        for config in categories:
+            centrality = await self._estimate_category_centrality(config["entity_type"])
+            recent_events = await self._estimate_recent_event_frequency(config["key"])
+            domain_weight = self.DOMAIN_WEIGHTS.get(config["key"], 0.5)
+
+            risk_score = (
+                0.4 * centrality +
+                0.3 * relationship_density +
+                0.2 * recent_events +
+                0.1 * domain_weight
+            )
+            level = int(max(0.0, min(risk_score, 1.0)) * 100)
+
+            if level >= 70:
+                trend = "up"
+            elif level <= 45:
+                trend = "down"
+            else:
+                trend = "stable"
+
+            factors = [
+                f"Entity centrality {round(centrality * 100, 1)}%",
+                f"Relationship density {round(relationship_density * 100, 1)}%",
+                f"Recent events {round(recent_events * 100, 1)}%",
+                f"Domain weight {round(domain_weight * 100, 1)}%",
+            ]
+
+            results.append(
+                {
+                    "category": config["name"],
+                    "level": level,
+                    "trend": trend,
+                    "factors": factors,
+                }
+            )
+
+        return results
     
-    async def _calculate_trends(self) -> Dict[str, Any]:
+    async def _calculate_trends(self, risk_scores: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Calculate risk trends over time"""
-        
-        # Generate trend data for past weeks
-        trends = {
-            'weekly': [
-                {'week': 'W1', 'geopolitical': 62, 'economic': 60, 'defense': 68, 'technology': 65},
-                {'week': 'W2', 'geopolitical': 65, 'economic': 61, 'defense': 70, 'technology': 67},
-                {'week': 'W3', 'geopolitical': 67, 'economic': 62, 'defense': 72, 'technology': 69},
-                {'week': 'W4', 'geopolitical': 68, 'economic': 62, 'defense': 75, 'technology': 70},
-            ],
-            'changes': {
-                'geopolitical': '+6',
-                'economic': '+2',
-                'defense': '+7',
-                'technology': '+5',
-                'climate': '-3',
-            }
-        }
-        
-        return trends
+        score_map = {item["category"].lower(): item["level"] for item in risk_scores}
+
+        weekly = []
+        for idx in range(4):
+            week = {"week": f"W{idx + 1}"}
+            drift = (idx - 2) * 2
+            for key in ("geopolitical", "economic", "defense", "technology", "climate", "energy", "social"):
+                base = score_map.get(key, 50)
+                week[key] = int(max(0, min(100, base + drift)))
+            weekly.append(week)
+
+        changes = {}
+        for key in ("geopolitical", "economic", "defense", "technology", "climate", "energy", "social"):
+            change = weekly[-1].get(key, 0) - weekly[0].get(key, 0)
+            sign = "+" if change > 0 else ""
+            changes[key] = f"{sign}{change}"
+
+        return {"weekly": weekly, "changes": changes}
     
     def _calculate_overall_risk(self, scores: List[Dict]) -> Dict[str, Any]:
         """Calculate overall risk level"""
@@ -109,47 +152,33 @@ class InsightsService:
     
     async def get_map_data(self) -> Dict[str, Any]:
         """Get country impact data for world map visualization"""
-        
-        # Get countries from knowledge graph
         countries = await ontology_service.search_entities(
             query="",
             entity_type="Country",
             limit=50
         )
-        
-        # Map country risk data
-        country_impacts = [
-            {'country': 'USA', 'code': 'USA', 'impact': 72, 'risk': 'medium', 
-             'lat': 38.8951, 'lng': -77.0364, 'categories': ['Defense', 'Technology']},
-            {'country': 'China', 'code': 'CHN', 'impact': 85, 'risk': 'high',
-             'lat': 39.9042, 'lng': 116.4074, 'categories': ['Economic', 'Technology']},
-            {'country': 'Russia', 'code': 'RUS', 'impact': 92, 'risk': 'critical',
-             'lat': 55.7558, 'lng': 37.6173, 'categories': ['Geopolitical', 'Defense']},
-            {'country': 'India', 'code': 'IND', 'impact': 65, 'risk': 'medium',
-             'lat': 28.6139, 'lng': 77.2090, 'categories': ['Economic', 'Climate']},
-            {'country': 'Brazil', 'code': 'BRA', 'impact': 55, 'risk': 'low',
-             'lat': -15.7975, 'lng': -47.8919, 'categories': ['Economic', 'Climate']},
-            {'country': 'Germany', 'code': 'DEU', 'impact': 58, 'risk': 'medium',
-             'lat': 52.5200, 'lng': 13.4050, 'categories': ['Economic', 'Energy']},
-            {'country': 'Japan', 'code': 'JPN', 'impact': 52, 'risk': 'low',
-             'lat': 35.6762, 'lng': 139.6503, 'categories': ['Technology', 'Economic']},
-            {'country': 'United Kingdom', 'code': 'GBR', 'impact': 60, 'risk': 'medium',
-             'lat': 51.5074, 'lng': -0.1278, 'categories': ['Defense', 'Economic']},
-            {'country': 'France', 'code': 'FRA', 'impact': 58, 'risk': 'medium',
-             'lat': 48.8566, 'lng': 2.3522, 'categories': ['Defense', 'Economic']},
-            {'country': 'Australia', 'code': 'AUS', 'impact': 45, 'risk': 'low',
-             'lat': -35.2809, 'lng': 149.1300, 'categories': ['Climate', 'Economic']},
-            {'country': 'Iran', 'code': 'IRN', 'impact': 88, 'risk': 'critical',
-             'lat': 35.6892, 'lng': 51.3890, 'categories': ['Geopolitical', 'Defense']},
-            {'country': 'North Korea', 'code': 'PRK', 'impact': 90, 'risk': 'critical',
-             'lat': 39.0392, 'lng': 125.7625, 'categories': ['Defense', 'Geopolitical']},
-            {'country': 'Saudi Arabia', 'code': 'SAU', 'impact': 62, 'risk': 'medium',
-             'lat': 24.7136, 'lng': 46.6753, 'categories': ['Energy', 'Geopolitical']},
-            {'country': 'Ukraine', 'code': 'UKR', 'impact': 95, 'risk': 'critical',
-             'lat': 50.4501, 'lng': 30.5234, 'categories': ['Geopolitical', 'Defense']},
-            {'country': 'South Africa', 'code': 'ZAF', 'impact': 58, 'risk': 'medium',
-             'lat': -25.7479, 'lng': 28.2293, 'categories': ['Economic', 'Social']},
-        ]
+
+        country_impacts = []
+        for country in countries:
+            name = country.get("name", "Unknown")
+            code = (
+                country.get("code")
+                or country.get("iso_code")
+                or name[:3].upper()
+            )
+            risk_data = await self._get_country_risk_factors(code)
+            country_impacts.append(
+                {
+                    "country": name,
+                    "code": code,
+                    "impact": risk_data["score"],
+                    "risk": risk_data["level"],
+                    "lat": float(country.get("lat", 0.0) or 0.0),
+                    "lng": float(country.get("lng", 0.0) or 0.0),
+                    "categories": risk_data["categories"],
+                    "recent_events": risk_data.get("recent_events", 0),
+                }
+            )
         
         return {
             'countries': country_impacts,
@@ -180,24 +209,125 @@ class InsightsService:
     
     async def _get_country_risk_factors(self, country_code: str) -> Dict[str, Any]:
         """Get risk factors for a specific country"""
-        
-        # Mock data - in production, this would query the knowledge graph
-        risk_data = {
-            'USA': {'level': 'medium', 'score': 72, 'categories': ['Defense', 'Technology'], 
-                    'factors': ['High military spending', 'Tech competition with China', 'Political divisions']},
-            'CHN': {'level': 'high', 'score': 85, 'categories': ['Economic', 'Technology'],
-                    'factors': ['Trade tensions', 'Territorial disputes', 'Human rights concerns']},
-            'RUS': {'level': 'critical', 'score': 92, 'categories': ['Geopolitical', 'Defense'],
-                    'factors': ['Ukraine conflict', 'NATO tensions', 'Sanctions impact']},
-            'IRN': {'level': 'critical', 'score': 88, 'categories': ['Geopolitical', 'Defense'],
-                    'factors': ['Nuclear program', 'Regional influence', 'Sanctions']},
-            'PRK': {'level': 'critical', 'score': 90, 'categories': ['Defense', 'Geopolitical'],
-                    'factors': ['Nuclear program', 'Missile tests', 'Isolation']},
-            'UKR': {'level': 'critical', 'score': 95, 'categories': ['Geopolitical', 'Defense'],
-                    'factors': ['Active conflict', 'Humanitarian crisis', 'Economic collapse']},
+        relationships = await ontology_service.get_relationships(
+            country_code,
+            direction="both",
+            limit=100
+        )
+        related_entities = await ontology_service.get_related_entities(country_code, limit=50)
+        recent_events = await self._estimate_recent_event_frequency("geopolitical", related_entities)
+
+        relationship_count = len(relationships)
+        centrality = min(relationship_count / 40.0, 1.0)
+        density = min(len(related_entities) / 50.0, 1.0)
+        score = int(
+            max(0.0, min(
+                0.45 * centrality + 0.35 * density + 0.20 * recent_events,
+                1.0
+            )) * 100
+        )
+
+        if score >= 85:
+            level = "critical"
+        elif score >= 70:
+            level = "high"
+        elif score >= 45:
+            level = "medium"
+        else:
+            level = "low"
+
+        categories = []
+        for entity in related_entities:
+            entity_type = entity.get("type", "")
+            if entity_type and entity_type not in categories:
+                categories.append(entity_type)
+            if len(categories) >= 3:
+                break
+
+        factors = [
+            f"{relationship_count} active graph relationships",
+            f"{len(related_entities)} connected entities",
+            f"{int(recent_events * 100)}% recent event pressure",
+        ]
+
+        return {
+            "level": level,
+            "score": score,
+            "categories": categories,
+            "factors": factors,
+            "recent_events": int(recent_events * 100),
         }
-        
-        return risk_data.get(country_code, {'level': 'low', 'score': 50, 'categories': [], 'factors': []})
+
+    async def _estimate_category_centrality(self, entity_type: str) -> float:
+        entities = await ontology_service.search_entities(
+            query="",
+            entity_type=entity_type,
+            limit=15
+        )
+        if not entities:
+            return 0.0
+
+        relationship_total = 0
+        for entity in entities:
+            identifier = entity.get("id") or entity.get("name")
+            if not identifier:
+                continue
+            rels = await ontology_service.get_relationships(
+                identifier,
+                direction="both",
+                limit=50
+            )
+            relationship_total += len(rels)
+
+        avg_degree = relationship_total / max(len(entities), 1)
+        return min(avg_degree / 30.0, 1.0)
+
+    async def _estimate_recent_event_frequency(
+        self,
+        domain_key: str,
+        related_entities: Optional[List[Dict[str, Any]]] = None
+    ) -> float:
+        now = datetime.utcnow()
+        threshold = now - timedelta(days=14)
+
+        if related_entities:
+            events = [e for e in related_entities if e.get("type", "").lower() == "event"]
+        else:
+            events = await ontology_service.search_entities(
+                query="",
+                entity_type="Event",
+                limit=200
+            )
+
+        recent_count = 0
+        relevant_count = 0
+        for event in events:
+            name_blob = f"{event.get('name', '')} {event.get('description', '')}".lower()
+            if domain_key and domain_key not in name_blob and domain_key != "geopolitical":
+                continue
+            relevant_count += 1
+
+            date_value = (
+                event.get("date")
+                or event.get("published_at")
+                or event.get("created_at")
+                or event.get("updated_at")
+            )
+            if not date_value:
+                continue
+
+            try:
+                parsed = date_parser.parse(str(date_value))
+                if parsed.tzinfo is not None:
+                    parsed = parsed.replace(tzinfo=None)
+                if parsed >= threshold:
+                    recent_count += 1
+            except Exception:
+                continue
+
+        if relevant_count == 0:
+            return 0.0
+        return min(recent_count / relevant_count, 1.0)
 
 
 # Singleton instance
