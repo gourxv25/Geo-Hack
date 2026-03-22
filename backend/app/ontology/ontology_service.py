@@ -74,9 +74,11 @@ class OntologyService:
         
         results = await self.neo4j.execute_query(
             cypher, 
-            query=query, 
-            entity_type=entity_type,
-            limit=limit
+            parameters={
+                "query": query,
+                "entity_type": entity_type,
+                "limit": limit
+            }
         )
         
         entities = []

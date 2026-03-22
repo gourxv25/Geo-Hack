@@ -21,7 +21,10 @@ class ChromaService:
     """Optional vector store for GraphRAG context expansion."""
 
     def __init__(self) -> None:
-        self.client = AsyncOpenAI(api_key=settings.openai_api_key)
+        self.client = AsyncOpenAI(
+            api_key=settings.openai_api_key,
+            base_url=settings.openai_base_url,
+        )
         self.embedding_model = settings.openai_embedding_model
         self._in_memory_docs: List[Dict[str, Any]] = []
         self._collection = None

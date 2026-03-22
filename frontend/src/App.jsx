@@ -34,12 +34,40 @@ function App() {
   }, []);
 
   const fetchSystemStatus = async () => {
+    const endpoint = '/api/v1/health';
     try {
-      const response = await fetch('/api/v1/health');
-      const data = await response.json();
+      const response = await fetch(endpoint, {
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+      const contentType = response.headers.get('content-type') || '';
+      const rawBody = await response.text();
+
+      if (!response.ok) {
+        throw new Error(
+          `System status request failed: ${response.status} ${response.statusText}. Raw response: ${rawBody || '<empty>'}`
+        );
+      }
+
+      if (!rawBody.trim()) {
+        throw new Error('System status response body is empty');
+      }
+
+      if (!contentType.includes('application/json')) {
+        throw new Error(
+          `Expected JSON but received "${contentType || 'unknown'}". Raw response: ${rawBody}`
+        );
+      }
+
+      const data = JSON.parse(rawBody);
       setSystemStatus(data);
     } catch (error) {
-      console.error('Failed to fetch system status:', error);
+      console.error('Failed to fetch system status:', {
+        endpoint,
+        message: error?.message || String(error),
+        error,
+      });
     }
   };
 

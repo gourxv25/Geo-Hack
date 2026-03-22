@@ -3,7 +3,10 @@ Celery Application Configuration
 """
 from celery import Celery
 from celery.schedules import crontab
+from datetime import timedelta
 import os
+
+from app.config import settings
 
 # Celery configuration
 celery_app = Celery(
@@ -29,10 +32,10 @@ celery_app.conf.update(
 
 # Celery Beat Schedule
 celery_app.conf.beat_schedule = {
-    # News ingestion every 30 minutes
-    'ingest-news-every-30-minutes': {
+    # News ingestion every 2-5 minutes (clamped by settings validator)
+    'ingest-news-realtime-polling': {
         'task': 'app.tasks.ingestion.ingest_news',
-        'schedule': crontab(minute='*/30'),
+        'schedule': timedelta(minutes=settings.INGESTION_INTERVAL_MINUTES),
     },
     # Entity linking every hour
     'entity-linking-hourly': {

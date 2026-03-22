@@ -6,7 +6,7 @@ import './SettingsPage.css';
 const SettingsPage = () => {
   const [activeTab, setActiveTab] = useState('api');
   const [settings, setSettings] = useState({
-    openaiKey: '',
+    openrouterKey: '',
     newsapiKey: '',
     neo4jUri: 'bolt://neo4j:7687',
     neo4jUser: 'neo4j',
@@ -63,15 +63,15 @@ const SettingsPage = () => {
               <h3>API Configuration</h3>
               
               <div className="form-group">
-                <label>OpenAI API Key</label>
+                <label>OpenRouter API Key</label>
                 <div className="input-with-action">
                   <input
                     type="password"
-                    value={settings.openaiKey}
-                    onChange={(e) => setSettings({...settings, openaiKey: e.target.value})}
-                    placeholder="sk-..."
+                    value={settings.openrouterKey}
+                    onChange={(e) => setSettings({...settings, openrouterKey: e.target.value})}
+                    placeholder="sk-or-v1-..."
                   />
-                  <span className="input-hint">Required for GPT-4, NER, entity linking</span>
+                  <span className="input-hint">Required for GPT models, NER, entity linking</span>
                 </div>
               </div>
 

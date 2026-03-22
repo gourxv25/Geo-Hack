@@ -94,12 +94,28 @@ async def get_ingestion_status():
     """
     status = await redis_client.get(NEWS_STATUS_KEY) or {}
     last_run = status.get("last_run")
-    sources_active = len(settings.rss_feeds) + (1 if settings.news_api_key else 0)
+    sources_active = (
+        len(settings.rss_feeds)
+        + (1 if settings.news_api_key else 0)
+        + (1 if settings.GDELT_ENABLED else 0)
+        + (1 if settings.EVENT_REGISTRY_API_KEY else 0)
+    )
     total = status.get("articles_ingested", 0)
+    next_run = None
+    if last_run:
+        parsed_last = _parse_datetime(last_run)
+        if parsed_last:
+            next_run = (
+                parsed_last
+                .replace(microsecond=0)
+                .timestamp()
+                + (settings.INGESTION_INTERVAL_MINUTES * 60)
+            )
+            next_run = datetime.utcfromtimestamp(next_run).isoformat()
 
     return IngestionStatus(
         last_run=last_run,
-        next_run=None,
+        next_run=next_run,
         articles_ingested=total,
         sources_active=sources_active,
         status=status.get("status", "idle"),
@@ -126,7 +142,12 @@ async def trigger_ingestion():
 
 
 @router.post("/trigger-ingestion")
-async def trigger_ingestion_debug(limit_per_source: int = 5):
+async def trigger_ingestion_debug(
+    limit_per_source: int = 5,
+    keywords: Optional[str] = None,
+    country: Optional[str] = None,
+    category: Optional[str] = None,
+):
     """
     Debug endpoint to manually run ingestion with a small limit.
     """
@@ -135,7 +156,12 @@ async def trigger_ingestion_debug(limit_per_source: int = 5):
         f"(limit_per_source={limit_per_source})"
     )
     try:
-        result = await news_ingestor.ingest_all(limit_per_source=limit_per_source)
+        result = await news_ingestor.ingest_all(
+            limit_per_source=limit_per_source,
+            keywords=[item.strip() for item in (keywords or "").split(",") if item.strip()],
+            country=country,
+            category=category,
+        )
         return {
             "message": "Debug ingestion completed",
             "limit_per_source": limit_per_source,
@@ -143,6 +169,8 @@ async def trigger_ingestion_debug(limit_per_source: int = 5):
             "unique_articles": result.get("unique_articles", 0),
             "persisted_to_neo4j": result.get("persisted_to_neo4j", 0),
             "sources": result.get("sources", []),
+            "source_counts": result.get("source_counts", {}),
+            "dedup_metrics": result.get("dedup_metrics", {}),
             "source_failures": result.get("source_failures", {}),
         }
     except Exception as e:
@@ -161,17 +189,22 @@ async def get_sources():
         source_name = article.get("source", "Unknown")
         source_counts[source_name] = source_counts.get(source_name, 0) + 1
 
-    sources = [
-        NewsSource(
-            name=url,
-            type="rss",
-            url=url,
-            active=True,
-            last_fetch=None,
-            articles_count=source_counts.get(url, 0),
+    sources = []
+    for url in settings.rss_feeds:
+        host = _host_from_url(url)
+        count = source_counts.get(host, 0)
+        if count == 0:
+            count = sum(v for k, v in source_counts.items() if host in k.lower())
+        sources.append(
+            NewsSource(
+                name=host,
+                type="rss",
+                url=url,
+                active=True,
+                last_fetch=None,
+                articles_count=count,
+            )
         )
-        for url in settings.rss_feeds
-    ]
 
     if settings.news_api_key:
         sources.append(
@@ -182,6 +215,30 @@ async def get_sources():
                 active=True,
                 last_fetch=None,
                 articles_count=source_counts.get("NewsAPI", 0),
+            )
+        )
+
+    if settings.GDELT_ENABLED:
+        sources.append(
+            NewsSource(
+                name="GDELT",
+                type="osint",
+                url="https://api.gdeltproject.org/api/v2/doc/doc",
+                active=True,
+                last_fetch=None,
+                articles_count=source_counts.get("GDELT", 0),
+            )
+        )
+
+    if settings.EVENT_REGISTRY_API_KEY:
+        sources.append(
+            NewsSource(
+                name="EventRegistry",
+                type="api",
+                url="https://eventregistry.org/api/v1/article/getArticles",
+                active=True,
+                last_fetch=None,
+                articles_count=source_counts.get("EventRegistry", 0),
             )
         )
 
@@ -316,11 +373,14 @@ def _normalize_article(article: Dict[str, Any]) -> Dict[str, Any]:
         "url": article.get("url", ""),
         "published_at": article.get("published_at") or datetime.utcnow().isoformat(),
         "categories": categories,
-        "domain": article.get("domain") or (categories[0] if categories else "General"),
-        "region": region,
+        "domain": article.get("domain") or article.get("topic") or (categories[0] if categories else "General"),
+        "region": region or (article.get("location", {}) or {}).get("name", "Global"),
+        "location": article.get("location") or {"name": region or "Global"},
         "entities": article.get("entities", []),
         "sentiment": article.get("sentiment"),
-        "relevance_score": article.get("relevance_score"),
+        "relevance_score": article.get("relevance_score") or article.get("confidence_score"),
+        "source_credibility": article.get("source_credibility"),
+        "event_key": article.get("event_key"),
     }
 
 
@@ -415,3 +475,10 @@ def _infer_region(title: str, summary: str) -> str:
         if any(keyword in text for keyword in keywords):
             return region
     return "Global"
+
+
+def _host_from_url(url: str) -> str:
+    from urllib.parse import urlparse
+
+    host = urlparse(url).netloc.lower().replace("www.", "")
+    return host or url

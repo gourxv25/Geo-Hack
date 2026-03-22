@@ -28,9 +28,10 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
     
-    # OpenAI
-    OPENAI_API_KEY: str
-    OPENAI_MODEL: str = "gpt-4-turbo-preview"
+    # OpenRouter (OpenAI-compatible API)
+    OPENROUTER_API_KEY: str
+    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    OPENAI_MODEL: str = "OpenAI: gpt-oss-120b (free)"
     OPENAI_MAX_TOKENS: int = 2000
     OPENAI_MODEL_GPT4: str = "gpt-4-turbo-preview"
     OPENAI_MODEL_GPT35: str = "gpt-3.5-turbo"
@@ -38,6 +39,8 @@ class Settings(BaseSettings):
     
     # News APIs
     NEWS_API_KEY: Optional[str] = None
+    EVENT_REGISTRY_API_KEY: Optional[str] = None
+    GDELT_ENABLED: bool = True
     
     # RSS Feed Sources
     RSS_FEEDS: list = [
@@ -52,10 +55,19 @@ class Settings(BaseSettings):
     ]
     
     # Data Ingestion Settings
-    INGESTION_INTERVAL_MINUTES: int = 30
-    MAX_ARTICLES_PER_INGESTION: int = 100
+    INGESTION_INTERVAL_MINUTES: int = 5
+    MAX_ARTICLES_PER_INGESTION: int = 150
     STARTUP_INGESTION_ENABLED: bool = True
     STARTUP_INGESTION_LIMIT: int = 5
+    NEWS_FETCH_TIMEOUT_SECONDS: int = 20
+    NEWS_MAX_CONCURRENT_FETCHES: int = 8
+    NEWS_MAX_CONCURRENT_ENRICHMENT: int = 4
+    NEWS_DEDUP_SIMILARITY_THRESHOLD: float = 0.86
+    NEWS_DEDUP_TTL_SECONDS: int = 21600
+    NEWS_MAX_RAW_TEXT_CHARS: int = 9000
+    NEWS_MAX_LLM_TEXT_CHARS: int = 2800
+    NEWS_BATCH_SIZE: int = 25
+    NEWS_USE_LLM_ENRICHMENT: bool = False
     
     # GraphRAG Settings
     GRAPHRAG_TOP_K: int = 5
@@ -95,9 +107,22 @@ class Settings(BaseSettings):
             return [origin.strip() for origin in value_str.split(",") if origin.strip()]
         return [value_str] if value_str else ["http://localhost:3000", "http://127.0.0.1:3000"]
 
+    @field_validator("INGESTION_INTERVAL_MINUTES", mode="before")
+    @classmethod
+    def clamp_ingestion_interval(cls, value):
+        try:
+            numeric = int(value)
+        except Exception:
+            return 5
+        return max(2, min(5, numeric))
+
     @property
     def openai_api_key(self) -> str:
-        return self.OPENAI_API_KEY
+        return self.OPENROUTER_API_KEY
+
+    @property
+    def openai_base_url(self) -> str:
+        return self.OPENROUTER_BASE_URL
 
     @property
     def openai_model(self) -> str:

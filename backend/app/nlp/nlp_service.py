@@ -16,7 +16,10 @@ class NLPService:
     """Service for NLP operations using spaCy + OpenAI enrichment."""
     
     def __init__(self):
-        self.client = AsyncOpenAI(api_key=settings.openai_api_key)
+        self.client = AsyncOpenAI(
+            api_key=settings.openai_api_key,
+            base_url=settings.openai_base_url,
+        )
         self.model = settings.openai_model
         self.max_tokens = settings.openai_max_tokens
         self._spacy_nlp = None

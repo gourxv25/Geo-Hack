@@ -32,7 +32,7 @@ A real-time knowledge graph system that ingests multi-domain data (geopolitics, 
 ### Prerequisites
 
 - Docker and Docker Compose
-- OpenAI API Key
+- OpenRouter API Key
 - NewsAPI Key (optional)
 
 ### Setup
@@ -60,7 +60,8 @@ A real-time knowledge graph system that ingests multi-domain data (geopolitics, 
 
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `OPENAI_API_KEY` | OpenAI API key for GPT models | Yes |
+| `OPENROUTER_API_KEY` | OpenRouter API key for GPT models | Yes |
+| `OPENROUTER_BASE_URL` | OpenRouter API base URL | Yes |
 | `NEWS_API_KEY` | NewsAPI key for news ingestion | No |
 | `NEO4J_URI` | Neo4j connection URI | Yes |
 | `NEO4J_PASSWORD` | Neo4j password | Yes |
@@ -122,7 +123,7 @@ A real-time knowledge graph system that ingests multi-domain data (geopolitics, 
 
 - **Backend**: Python, FastAPI, Neo4j, PostgreSQL, Redis
 - **Frontend**: React, Vite, React Simple Maps, D3.js, Recharts
-- **AI/ML**: OpenAI GPT-4, LangChain
+- **AI/ML**: GPT models via OpenRouter (OpenAI-compatible), LangChain
 - **Background Tasks**: Celery, Redis
 - **Containerization**: Docker, Docker Compose
 
