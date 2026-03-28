@@ -41,6 +41,7 @@ class FeedSource:
 
 
 DEFAULT_FEEDS_PATH = Path(__file__).with_name("rss_feeds.json")
+LARGE_FEEDS_PATH = Path(__file__).with_name("rss_sources.json")
 TEMP_FEEDS = [
     "http://feeds.bbci.co.uk/news/world/rss.xml",
     "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
@@ -112,31 +113,46 @@ class NewsIngestor:
     def load_feeds(self, category: Optional[str] = None) -> List[FeedSource]:
         """Load feed list from JSON config with fallback to settings.RSS_FEEDS."""
         loaded_feeds: List[FeedSource] = []
+        dedupe_keys: Set[Tuple[str, str]] = set()
 
         config_path = self.feeds_path
         if not config_path.is_absolute():
             # Resolve relative to backend app directory.
             config_path = (Path(__file__).resolve().parents[2] / config_path).resolve()
 
-        if config_path.exists():
+        load_paths = [config_path, LARGE_FEEDS_PATH.resolve()]
+        for path in load_paths:
+            if not path.exists():
+                continue
             try:
-                entries = json.loads(config_path.read_text(encoding="utf-8"))
-                for row in entries:
+                entries = json.loads(path.read_text(encoding="utf-8"))
+                rows = entries.get("feeds", []) if isinstance(entries, dict) else entries
+                for row in rows:
                     if not isinstance(row, dict):
                         continue
                     name = str(row.get("name", "Unknown Feed")).strip()
                     url = str(row.get("url", "")).strip()
                     feed_category = str(row.get("category", "general")).strip().lower()
-                    if name and url:
-                        loaded_feeds.append(FeedSource(name=name, url=url, category=feed_category))
+                    if not name or not url:
+                        continue
+                    dedupe_key = (name.lower(), url.lower())
+                    if dedupe_key in dedupe_keys:
+                        continue
+                    dedupe_keys.add(dedupe_key)
+                    loaded_feeds.append(FeedSource(name=name, url=url, category=feed_category))
             except Exception as exc:
-                logger.error("[ERROR] Failed to load feeds config from %s: %s", config_path, exc)
+                logger.error("[ERROR] Failed to load feeds config from %s: %s", path, exc)
 
         if not loaded_feeds:
             fallback_urls = list(getattr(settings, "RSS_FEEDS", [])) or TEMP_FEEDS
             for url in fallback_urls:
                 if isinstance(url, str) and url.strip():
-                    loaded_feeds.append(FeedSource(name=url, url=url.strip(), category="general"))
+                    feed_url = url.strip()
+                    dedupe_key = (feed_url.lower(), feed_url.lower())
+                    if dedupe_key in dedupe_keys:
+                        continue
+                    dedupe_keys.add(dedupe_key)
+                    loaded_feeds.append(FeedSource(name=feed_url, url=feed_url, category="general"))
 
         if category:
             category_normalized = category.strip().lower()
@@ -172,10 +188,12 @@ class NewsIngestor:
             feed, payload, error_text = item
             if error_text:
                 failures[feed.name] = error_text
+                logger.error("[RSS] Failed: %s", feed.name)
                 logger.error("[ERROR] Feed failed: %s (%s)", feed.name, error_text)
                 continue
             results.append((feed, payload))
 
+        logger.info("[SUMMARY] Total feeds processed: %s", len(feeds))
         return results, failures
 
     async def _fetch_single_feed(
@@ -186,6 +204,7 @@ class NewsIngestor:
     ) -> Tuple[FeedSource, bytes, Optional[str]]:
         """Fetch one feed with retries, timeout safety, and basic rate limiting."""
         _ = limit_per_source  # kept for future provider-specific query params
+        logger.info("[RSS] Fetching: %s", feed.name)
         logger.info("[INGEST] Fetching feed: %s (url: %s)", feed.name, feed.url)
 
         for attempt in range(1, self.fetch_retries + 1):
@@ -264,6 +283,7 @@ class NewsIngestor:
                 )
 
             logger.info("[INGEST] Success: %s articles", len(articles))
+            logger.info("[RSS] Success: %s articles (%s)", len(articles), feed.name)
             return articles
         except Exception as exc:
             logger.error("[ERROR] Feed parse failed: %s (%s)", feed.name, exc)

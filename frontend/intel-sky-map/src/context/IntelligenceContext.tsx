@@ -5,6 +5,14 @@ export interface IntelligenceState {
   setSelectedCountry: (c: string) => void;
   activeFilters: string[];
   setActiveFilters: (f: string[]) => void;
+  newsCategory: string;
+  setNewsCategory: (v: string) => void;
+  newsRegion: string;
+  setNewsRegion: (v: string) => void;
+  newsStartDate: string;
+  setNewsStartDate: (v: string) => void;
+  newsEndDate: string;
+  setNewsEndDate: (v: string) => void;
   aiAppliedContext: string | null;
   processQuery: (query: string) => void;
 }
@@ -52,6 +60,10 @@ export const useIntelligence = () => {
 export const IntelligenceProvider = ({ children }: { children: ReactNode }) => {
   const [selectedCountry, setSelectedCountry] = useState("India");
   const [activeFilters, setActiveFilters] = useState(["geopolitical", "economic"]);
+  const [newsCategory, setNewsCategory] = useState("");
+  const [newsRegion, setNewsRegion] = useState("");
+  const [newsStartDate, setNewsStartDate] = useState("");
+  const [newsEndDate, setNewsEndDate] = useState("");
   const [aiAppliedContext, setAiAppliedContext] = useState<string | null>(null);
 
   const processQuery = useCallback((query: string) => {
@@ -73,7 +85,11 @@ export const IntelligenceProvider = ({ children }: { children: ReactNode }) => {
     }
 
     if (detectedRegion) setSelectedCountry(detectedRegion);
-    if (detectedDomains.length > 0) setActiveFilters(detectedDomains);
+    if (detectedDomains.length > 0) {
+      setActiveFilters(detectedDomains);
+      setNewsCategory(detectedDomains[0]);
+    }
+    if (detectedRegion) setNewsRegion(detectedRegion);
 
     if (detectedRegion || detectedDomains.length > 0) {
       const parts: string[] = [];
@@ -85,7 +101,24 @@ export const IntelligenceProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   return (
-    <IntelligenceContext.Provider value={{ selectedCountry, setSelectedCountry, activeFilters, setActiveFilters, aiAppliedContext, processQuery }}>
+    <IntelligenceContext.Provider
+      value={{
+        selectedCountry,
+        setSelectedCountry,
+        activeFilters,
+        setActiveFilters,
+        newsCategory,
+        setNewsCategory,
+        newsRegion,
+        setNewsRegion,
+        newsStartDate,
+        setNewsStartDate,
+        newsEndDate,
+        setNewsEndDate,
+        aiAppliedContext,
+        processQuery,
+      }}
+    >
       {children}
     </IntelligenceContext.Provider>
   );

@@ -18,7 +18,7 @@ const suggestions = [
 ];
 
 const AIChat = () => {
-  const { selectedCountry } = useIntelligence();
+  const { selectedCountry, newsCategory, newsRegion, newsStartDate, newsEndDate } = useIntelligence();
   const chatMutation = useAnalysisChat();
 
   const [messages, setMessages] = useState<Message[]>([]);
@@ -53,6 +53,10 @@ const AIChat = () => {
         question: msg,
         country: selectedCountry,
         sessionId: sessionIdRef.current,
+        category: newsCategory || undefined,
+        region: newsRegion || undefined,
+        startDate: newsStartDate || undefined,
+        endDate: newsEndDate || undefined,
       });
       const answerMsg: Message = {
         role: "assistant",

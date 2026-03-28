@@ -17,6 +17,7 @@ from app.database.neo4j_client import neo4j_client
 from app.database.postgres_client import postgres_client
 from app.database.redis_client import redis_client
 from app.realtime.event_consumer import redis_event_consumer
+from app.realtime.cyclic_ingestion import start_cyclic_ingestion
 from app.realtime.ingestion_pipeline import realtime_ingestion_pipeline
 from app.realtime.websocket_server import ws_router
 from app.ontology import ontology_service
@@ -72,6 +73,17 @@ async def lifespan(app: FastAPI):
     app.state.realtime_consumer_task = asyncio.create_task(
         redis_event_consumer.run(app.state.realtime_stop_event)
     )
+    app.state.cyclic_ingestion_task = None
+
+    if settings.CYCLIC_INGESTION_ENABLED:
+        app.state.cyclic_ingestion_task = asyncio.create_task(
+            start_cyclic_ingestion(app.state.realtime_stop_event)
+        )
+        logger.info(
+            "Cyclic ingestion enabled (batch_size=%s, interval_seconds=%s)",
+            settings.CYCLIC_INGESTION_BATCH_SIZE,
+            settings.CYCLIC_INGESTION_INTERVAL_SECONDS,
+        )
 
     if settings.startup_ingestion_enabled:
         try:
@@ -104,6 +116,11 @@ async def lifespan(app: FastAPI):
             await app.state.realtime_consumer_task
         except Exception:
             pass
+    if hasattr(app.state, "cyclic_ingestion_task") and app.state.cyclic_ingestion_task:
+        try:
+            await app.state.cyclic_ingestion_task
+        except Exception:
+            pass
     
     await neo4j_client.close()
     logger.info("Neo4j connection closed")
@@ -127,15 +144,6 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-
-@app.on_event("startup")
-async def create_indexes():
-    try:
-        if not neo4j_client.driver:
-            await neo4j_client.connect()
-        await create_fulltext_indexes()
-    except Exception as e:
-        logger.warning(f"Failed to create startup full-text index: {e}")
 
 # Import limiter after app creation to avoid circular import
 from app.limiter import limiter

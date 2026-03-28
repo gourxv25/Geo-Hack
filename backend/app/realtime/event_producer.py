@@ -24,6 +24,8 @@ class RedisEventProducer:
             "source": article.get("source", "Unknown"),
             "published_at": article.get("published_at", ""),
             "category": article.get("category", "general"),
+            "domain": article.get("domain", article.get("category", "general")),
+            "region": article.get("region", "Global"),
             "url": article.get("url", ""),
         }
 

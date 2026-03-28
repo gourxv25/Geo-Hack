@@ -8,7 +8,6 @@ node_modules/
 .env# Node.js
 node_modules/
 package-lock.json
-frontend/node_modules/
 plans/
 
 # Python

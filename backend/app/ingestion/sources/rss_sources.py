@@ -66,11 +66,13 @@ class RSSSourcesClient:
         feed: RSSFeedSource,
     ) -> Tuple[RSSFeedSource, bytes, Optional[str]]:
         try:
+            logger.info("[RSS] Fetching: %s", feed.name)
             payload = await self._request_with_retry(client, feed.url)
             if not payload:
                 raise ValueError("empty response")
             return feed, payload, None
         except Exception as exc:
+            logger.error("[RSS] Failed: %s", feed.name)
             return feed, b"", str(exc)
 
     @retry(

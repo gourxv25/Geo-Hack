@@ -1,7 +1,7 @@
 ﻿import { Globe } from "lucide-react";
 import FilterPanel from "@/components/dashboard/FilterPanel";
 import WorldMap from "@/components/dashboard/WorldMap";
-import LiveEvents from "@/components/dashboard/LiveEvents";
+import NewsPanel from "@/components/news/NewsPanel";
 import AIAssistant from "@/components/dashboard/AIAssistant";
 import { useIntelligence } from "@/context/IntelligenceContext";
 import { useDashboardData } from "@/hooks/useBackendData";
@@ -37,25 +37,25 @@ const Index = () => {
         </div>
       </header>
 
-      <div className="relative z-10 flex h-[calc(100vh-138px)] flex-col overflow-auto lg:h-[calc(100vh-84px)] lg:flex-row lg:overflow-hidden">
-        <aside className="w-full border-b border-border/60 bg-intel-panel/60 backdrop-blur-md lg:w-72 lg:border-b-0 lg:border-r">
+      <div className="relative z-10 h-[calc(100vh-138px)] overflow-auto lg:h-[calc(100vh-84px)]">
+        <div className="grid h-full grid-cols-1 gap-4 p-4 lg:grid-cols-12 lg:gap-5">
+          <aside className="order-2 border border-border/60 bg-intel-panel/60 backdrop-blur-md lg:order-1 lg:col-span-2 lg:rounded-2xl">
           <FilterPanel />
-        </aside>
+          </aside>
 
-        <main className="h-[52vh] flex-1 p-4 lg:h-auto">
-          <WorldMap selectedCountry={activeCountry} mapConnections={dashboard?.map_connections} />
-        </main>
+          <main className="order-1 flex min-h-[56vh] flex-col gap-4 lg:order-2 lg:col-span-10 lg:min-h-0">
+            <section className="relative min-h-[380px] flex-1 lg:min-h-0">
+              <WorldMap selectedCountry={activeCountry} mapConnections={dashboard?.map_connections} />
+              <div className="absolute inset-y-4 right-4 z-20 w-full max-w-[420px] lg:w-1/3">
+                <NewsPanel />
+              </div>
+            </section>
 
-        <aside className="w-full p-4 pt-0 lg:w-[360px] lg:pl-0 lg:pt-4">
-          <div className="intel-glass-shell flex h-full flex-col overflow-hidden">
-            <div className="min-h-0 flex-1">
-              <LiveEvents events={dashboard?.live_events} />
-            </div>
-            <div className="h-[42%] min-h-[280px] border-t border-border/60">
+            <div className="intel-glass-shell h-[320px] overflow-hidden">
               <AIAssistant />
             </div>
-          </div>
-        </aside>
+          </main>
+        </div>
       </div>
     </div>
   );

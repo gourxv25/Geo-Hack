@@ -33,9 +33,9 @@ const LiveEvents = ({ events = [] }: LiveEventsProps) => {
     const loadFallback = async () => {
       if (events.length > 0) return;
       try {
-        const previews = await getNewsPreviews({ page: 1, page_size: 8 });
+        const previews = await getNewsPreviews({ page: 1, limit: 8 });
         setItems(
-          previews.map((item) => ({
+          previews.articles.map((item) => ({
             id: item.id,
             region: item.source || "Global",
             text: item.title,

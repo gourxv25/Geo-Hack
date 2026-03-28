@@ -2,6 +2,7 @@
 Neo4j Graph Database Client
 """
 import re
+import asyncio
 from neo4j import AsyncGraphDatabase, AsyncDriver
 from typing import Optional, List, Dict, Any
 from loguru import logger
@@ -26,14 +27,42 @@ def validate_relationship_type(rel_type: str) -> bool:
 
 class Neo4jClient:
     """Async Neo4j client for graph database operations"""
-    
+
+    _instance: Optional["Neo4jClient"] = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+
     def __init__(self):
+        if getattr(self, "_initialized", False):
+            return
         self.driver: Optional[AsyncDriver] = None
         self.uri = settings.NEO4J_URI
         self.user = settings.NEO4J_USER
         self.password = settings.NEO4J_PASSWORD
         self.database = settings.NEO4J_DATABASE
+        self._connect_lock = asyncio.Lock()
+        self._initialized = True
     
+    async def _connect_unlocked(self) -> None:
+        """Create and validate a new driver. Caller must hold _connect_lock."""
+        self.driver = AsyncGraphDatabase.driver(
+            self.uri,
+            auth=(self.user, self.password),
+            max_connection_pool_size=100,  # Handle concurrent requests
+            connection_acquisition_timeout=60.0,  # Max wait for connection
+            max_connection_lifetime=3600,  # Recycle after 1 hour
+            connection_timeout=30.0,  # Network timeout
+            keep_alive=True,  # Maintain connections
+        )
+        # Verify connection with a real round-trip query.
+        async with self.driver.session(database=self.database) as session:
+            result = await session.run("RETURN 1 as ok")
+            await result.single()
+
     async def connect(self) -> None:
         """
         Establish connection to Neo4j database with optimized connection pooling.
@@ -44,29 +73,68 @@ class Neo4jClient:
         - max_connection_lifetime: 1 hour (recycle connections)
         - connection_timeout: 30s (fail fast on network issues)
         """
-        try:
-            self.driver = AsyncGraphDatabase.driver(
-                self.uri,
-                auth=(self.user, self.password),
-                max_connection_pool_size=100,  # Handle concurrent requests
-                connection_acquisition_timeout=60.0,  # Max wait for connection
-                max_connection_lifetime=3600,  # Recycle after 1 hour
-                connection_timeout=30.0,  # Network timeout
-                keep_alive=True,  # Maintain connections
-            )
-            # Verify connection
-            async with self.driver.session(database=self.database) as session:
-                await session.run("RETURN 1")
-            logger.info(f"Connected to Neo4j at {self.uri} (pool_size=100)")
-        except Exception as e:
-            logger.error(f"Failed to connect to Neo4j: {e}")
-            raise
+        async with self._connect_lock:
+            if self.driver is not None:
+                return
+            try:
+                await self._connect_unlocked()
+                logger.info(f"Connected to Neo4j at {self.uri} (pool_size=100)")
+            except Exception as e:
+                if self.driver is not None:
+                    try:
+                        await self.driver.close()
+                    except Exception:
+                        pass
+                self.driver = None
+                logger.error(f"Failed to connect to Neo4j: {e}")
+                raise
     
     async def close(self) -> None:
         """Close Neo4j connection"""
         if self.driver:
             await self.driver.close()
+            self.driver = None
             logger.info("Neo4j connection closed")
+
+    async def _ensure_connected(self) -> None:
+        """Ensure driver is connected and healthy; reconnect with retries when needed."""
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            try:
+                # Fast path: validate existing driver with a lightweight query.
+                if self.driver is not None:
+                    async with self.driver.session(database=self.database) as session:
+                        result = await session.run("RETURN 1 as ok")
+                        await result.single()
+                    return
+
+                async with self._connect_lock:
+                    # Another request may have connected while we were waiting.
+                    if self.driver is not None:
+                        async with self.driver.session(database=self.database) as session:
+                            result = await session.run("RETURN 1 as ok")
+                            await result.single()
+                        return
+
+                    logger.warning(
+                        "Neo4j driver not connected. Attempting reconnect "
+                        f"(attempt {attempt}/{max_attempts})..."
+                    )
+                    await self._connect_unlocked()
+                    logger.info(f"Neo4j reconnect successful on attempt {attempt}")
+                    return
+            except Exception as exc:
+                async with self._connect_lock:
+                    if self.driver is not None:
+                        try:
+                            await self.driver.close()
+                        except Exception:
+                            pass
+                        self.driver = None
+                if attempt >= max_attempts:
+                    logger.error(f"Neo4j reconnect failed after {max_attempts} attempts: {exc}")
+                    raise
+                await asyncio.sleep(0.5)
     
     async def health_check(self) -> bool:
         """Check if Neo4j is healthy"""
@@ -95,8 +163,7 @@ class Neo4jClient:
             params.update(kwargs)
         
         try:
-            if not self.driver:
-                raise RuntimeError("Neo4j driver is not connected")
+            await self._ensure_connected()
             async with self.driver.session(database=self.database) as session:
                 result = await session.run(query, params)
                 records = [record.data() async for record in result]
@@ -119,8 +186,7 @@ class Neo4jClient:
             params.update(kwargs)
         
         try:
-            if not self.driver:
-                raise RuntimeError("Neo4j driver is not connected")
+            await self._ensure_connected()
             
             async with self.driver.session(database=self.database) as session:
                 # Use execute_write for proper leader routing and automatic retries

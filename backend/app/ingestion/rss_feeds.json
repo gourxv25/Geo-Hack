@@ -1,6 +1,28 @@
 [
-  {"name": "Reuters Top News", "url": "https://feeds.reuters.com/reuters/topNews", "category": "geopolitics"},
-  {"name": "BBC News", "url": "https://feeds.bbci.co.uk/news/rss.xml", "category": "geopolitics"},
-  {"name": "Reuters Business", "url": "https://feeds.reuters.com/reuters/businessNews", "category": "economy"},
-  {"name": "Reuters World", "url": "https://feeds.reuters.com/reuters/worldNews", "category": "geopolitics"}
+  {"name": "CNN Top Stories", "url": "http://rss.cnn.com/rss/edition.rss", "category": "geopolitics"},
+  {"name": "CNN World", "url": "http://rss.cnn.com/rss/edition_world.rss", "category": "geopolitics"},
+  {"name": "Al Jazeera", "url": "https://www.aljazeera.com/xml/rss/all.xml", "category": "geopolitics"},
+  {"name": "The Guardian World", "url": "https://www.theguardian.com/world/rss", "category": "geopolitics"},
+  {"name": "NYTimes World", "url": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml", "category": "geopolitics"},
+
+  {"name": "NYTimes Business", "url": "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml", "category": "economy"},
+  {"name": "Financial Times", "url": "https://www.ft.com/?format=rss", "category": "economy"},
+  {"name": "Bloomberg Markets", "url": "https://feeds.bloomberg.com/markets/news.rss", "category": "economy"},
+  {"name": "CNBC Top News", "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html", "category": "economy"},
+  {"name": "MarketWatch", "url": "http://feeds.marketwatch.com/marketwatch/topstories/", "category": "economy"},
+
+  {"name": "TechCrunch", "url": "https://techcrunch.com/feed/", "category": "technology"},
+  {"name": "The Verge", "url": "https://www.theverge.com/rss/index.xml", "category": "technology"},
+  {"name": "Wired", "url": "https://www.wired.com/feed/rss", "category": "technology"},
+  {"name": "Ars Technica", "url": "http://feeds.arstechnica.com/arstechnica/index", "category": "technology"},
+
+  {"name": "ESPN Top Headlines", "url": "https://www.espn.com/espn/rss/news", "category": "sports"},
+  {"name": "Sky Sports News", "url": "https://www.skysports.com/rss/12040", "category": "sports"},
+
+  {"name": "ScienceDaily", "url": "https://www.sciencedaily.com/rss/top.xml", "category": "science"},
+  {"name": "Nature News", "url": "https://www.nature.com/nature.rss", "category": "science"},
+
+  {"name": "NDTV News India", "url": "https://feeds.feedburner.com/ndtvnews-india-news", "category": "geopolitics"},
+  {"name": "Times of India", "url": "https://timesofindia.indiatimes.com/rssfeedstopstories.cms", "category": "geopolitics"},
+  {"name": "The Hindu", "url": "https://www.thehindu.com/news/national/feeder/default.rss", "category": "geopolitics"}
 ]

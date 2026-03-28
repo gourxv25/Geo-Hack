@@ -18,8 +18,6 @@ class GraphUpdater:
         self._schema_initialized = False
 
     async def upsert_article_event(self, article: Dict[str, Any]) -> Dict[str, Any]:
-        if not neo4j_client.driver:
-            await neo4j_client.connect()
         if not self._schema_initialized:
             await self._ensure_schema()
             self._schema_initialized = True

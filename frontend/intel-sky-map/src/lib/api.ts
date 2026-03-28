@@ -12,6 +12,68 @@ export const WS_NEWS_URL =
   import.meta.env.VITE_WS_NEWS_URL?.toString() ||
   `${API_BASE_URL.replace(/^http/i, "ws").replace(/\/api\/v1$/, "")}/ws/news`;
 
+const CATEGORY_FILTER_ALIASES: Record<string, string> = {
+  geopolitical: "geopolitics",
+  geopolitics: "geopolitics",
+  global: "global",
+  economic: "economy",
+  economy: "economy",
+  business: "economy",
+  finance: "economy",
+  defense: "defense",
+  military: "defense",
+  technology: "tech",
+  technological: "tech",
+  tech: "tech",
+  science: "science",
+  climate: "climate",
+  health: "health",
+  sports: "sports",
+};
+
+const REGION_FILTER_ALIASES: Record<string, string> = {
+  india: "Asia Pacific",
+  china: "Asia Pacific",
+  japan: "Asia Pacific",
+  "south asia": "Asia Pacific",
+  "east asia": "Asia Pacific",
+  "indo-pacific": "Asia Pacific",
+  "united states": "North America",
+  usa: "North America",
+  canada: "North America",
+  mexico: "North America",
+  americas: "North America",
+  europe: "Europe",
+  uk: "Europe",
+  russia: "Europe",
+  germany: "Europe",
+  france: "Europe",
+  "middle east": "Middle East",
+  iran: "Middle East",
+  israel: "Middle East",
+  saudi: "Middle East",
+  qatar: "Middle East",
+  africa: "Africa",
+  brazil: "South America",
+  argentina: "South America",
+  chile: "South America",
+  peru: "South America",
+  colombia: "South America",
+  global: "Global",
+};
+
+export function normalizeNewsCategoryFilter(value?: string): string | undefined {
+  const raw = value?.trim();
+  if (!raw) return undefined;
+  return CATEGORY_FILTER_ALIASES[raw.toLowerCase()] ?? raw;
+}
+
+export function normalizeNewsRegionFilter(value?: string): string | undefined {
+  const raw = value?.trim();
+  if (!raw) return undefined;
+  return REGION_FILTER_ALIASES[raw.toLowerCase()] ?? raw;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: {
@@ -128,6 +190,12 @@ export type NewsPreview = {
   timestamp: string;
 };
 
+export type NewsListResponse = {
+  articles: NewsPreview[];
+  next_cursor?: string | null;
+  total: number;
+};
+
 export type NewsDetail = {
   id: string;
   title: string;
@@ -156,34 +224,70 @@ export async function getAnalysis(country: string): Promise<AnalysisPayload> {
 export async function sendChat(
   question: string,
   country: string,
-  sessionId?: string
+  sessionId?: string,
+  filters?: {
+    start_date?: string;
+    end_date?: string;
+    category?: string;
+    region?: string;
+  }
 ): Promise<ChatResponse> {
   return request<ChatResponse>("/frontend/analysis/chat", {
     method: "POST",
-    body: JSON.stringify({ question, country, session_id: sessionId }),
+    body: JSON.stringify({
+      question,
+      country,
+      session_id: sessionId,
+      ...(filters ?? {}),
+    }),
   });
 }
 
 export async function getNewsPreviews(params?: {
+  start_date?: string;
+  end_date?: string;
   page?: number;
-  page_size?: number;
+  limit?: number;
+  cursor?: string;
   source?: string;
   category?: string;
   region?: string;
   domain?: string;
-}): Promise<NewsPreview[]> {
-  const query = new URLSearchParams();
-  if (params?.page) query.set("page", String(params.page));
-  if (params?.page_size) query.set("page_size", String(params.page_size));
-  if (params?.source) query.set("source", params.source);
-  if (params?.category) query.set("category", params.category);
-  if (params?.region) query.set("region", params.region);
-  if (params?.domain) query.set("domain", params.domain);
-  const suffix = query.toString() ? `?${query.toString()}` : "";
+}): Promise<NewsListResponse> {
+  const normalizedCategory = normalizeNewsCategoryFilter(params?.category);
+  const normalizedRegion = normalizeNewsRegionFilter(params?.region);
+  const fetchNews = async (overrides?: { category?: string; region?: string }) => {
+    const query = new URLSearchParams();
+    if (params?.start_date) query.set("start_date", params.start_date);
+    if (params?.end_date) query.set("end_date", params.end_date);
+    if (params?.page) query.set("page", String(params.page));
+    if (params?.limit) query.set("limit", String(params.limit));
+    if (params?.cursor) query.set("cursor", params.cursor);
+    if (params?.source) query.set("source", params.source);
+    if ((overrides?.category ?? normalizedCategory)) query.set("category", overrides?.category ?? normalizedCategory!);
+    if ((overrides?.region ?? normalizedRegion)) query.set("region", overrides?.region ?? normalizedRegion!);
+    if (params?.domain) query.set("domain", params.domain);
 
-  const response = await fetch(`${API_BASE_URL}/news${suffix}`);
-  if (!response.ok) throw new Error(`Failed to fetch news list (${response.status})`);
-  return (await response.json()) as NewsPreview[];
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    const response = await fetch(`${API_BASE_URL}/news${suffix}`);
+    if (!response.ok) throw new Error(`Failed to fetch news list (${response.status})`);
+    return (await response.json()) as NewsListResponse;
+  };
+
+  const primary = await fetchNews();
+  if (primary.total > 0 || (!normalizedCategory && !normalizedRegion)) return primary;
+
+  if (normalizedRegion) {
+    const withoutRegion = await fetchNews({ region: "" });
+    if (withoutRegion.total > 0) return withoutRegion;
+  }
+
+  if (normalizedCategory) {
+    const withoutCategory = await fetchNews({ category: "", region: "" });
+    if (withoutCategory.total > 0) return withoutCategory;
+  }
+
+  return primary;
 }
 
 export async function getNewsById(id: string): Promise<NewsDetail> {

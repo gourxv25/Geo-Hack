@@ -28,7 +28,7 @@ const AIAssistant = () => {
   const [input, setInput] = useState("");
   const [conversation, setConversation] = useState<ConversationItem[]>(starterConversation);
   const navigate = useNavigate();
-  const { processQuery, selectedCountry } = useIntelligence();
+  const { processQuery, selectedCountry, newsCategory, newsRegion, newsStartDate, newsEndDate } = useIntelligence();
   const chatMutation = useAnalysisChat();
   const sessionIdRef = useRef<string>(`assist-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
@@ -45,6 +45,10 @@ const AIAssistant = () => {
         question,
         country: selectedCountry,
         sessionId: sessionIdRef.current,
+        category: newsCategory || undefined,
+        region: newsRegion || undefined,
+        startDate: newsStartDate || undefined,
+        endDate: newsEndDate || undefined,
       });
 
       setConversation((prev) => [

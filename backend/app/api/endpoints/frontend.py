@@ -16,6 +16,7 @@ from app.database.postgres_client import postgres_client
 from app.database.redis_client import redis_client
 from app.graphrag import graphrag_service
 from app.insights import insights_service
+from app.news import news_service
 from app.ontology import ontology_service
 
 
@@ -47,6 +48,10 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = None
     include_map_data: bool = False
     include_risk_analysis: bool = False
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    category: Optional[str] = None
+    region: Optional[str] = None
 
 
 async def _ensure_frontend_tables() -> None:
@@ -614,6 +619,32 @@ async def analysis_chat(request: ChatRequest) -> Dict[str, Any]:
     session_id = _normalize_session_id(request.session_id)
     try:
         normalized_question = _normalize_question(request.question)
+        normalized_region = (request.region or normalized_country).strip() or normalized_country
+        news_bundle = await news_service.list_news(
+            start_date=request.start_date,
+            end_date=request.end_date,
+            category=request.category,
+            region=normalized_region if request.region else None,
+            page=1,
+            limit=8,
+            cursor=None,
+        )
+        contextual_articles = news_bundle.get("articles", [])
+        context_lines: List[str] = []
+        for article in contextual_articles[:6]:
+            context_lines.append(
+                f"- {article.get('title', 'Untitled')} "
+                f"(source={article.get('source', 'Unknown')}, "
+                f"time={article.get('published_at', '')}, "
+                f"region={article.get('region', 'Global')})"
+            )
+        if context_lines:
+            normalized_question = (
+                f"{normalized_question}\n\n"
+                "Relevant visible news context:\n"
+                + "\n".join(context_lines)
+            )
+
         conversation_history = await _load_chat_context(
             session_id=session_id,
             country=normalized_country,
@@ -648,7 +679,7 @@ async def analysis_chat(request: ChatRequest) -> Dict[str, Any]:
         )
 
         response_payload = {
-            "question": normalized_question,
+            "question": request.question.strip(),
             "country": normalized_country,
             "session_id": session_id,
             "answer": answer,
@@ -659,6 +690,13 @@ async def analysis_chat(request: ChatRequest) -> Dict[str, Any]:
             "confidence": confidence,
             "confidence_score": confidence_score,
             "data_sources": rag_result.get("data_sources", []),
+            "news_context_count": len(contextual_articles),
+            "applied_filters": {
+                "start_date": request.start_date,
+                "end_date": request.end_date,
+                "category": request.category,
+                "region": request.region,
+            },
         }
         return ok(response_payload, "Query answered")
     except ValueError as exc:

@@ -65,7 +65,11 @@ class IngestionPipeline:
             for feed, payload in rss_payloads:
                 parsed = self.parser.parse_rss_payload(feed.name, feed.category, payload, limit_per_source)
                 rss_articles.extend(parsed)
+                logger.info("[RSS] Success: %s articles (%s)", len(parsed), feed.name)
                 logger.info("[INFO] RSS fetched: %s -> %s articles", feed.name, len(parsed))
+
+            logger.info("[SUMMARY] Total feeds processed: %s", len(feeds))
+            logger.info("[SUMMARY] Total articles fetched: %s", len(rss_articles))
 
             api_articles: List[Dict[str, Any]] = []
             min_required = max(10, min(35, limit_per_source))

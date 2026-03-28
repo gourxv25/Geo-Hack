@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     NEWS_SEEN_HASHES_FILE: str = "data/seen_article_hashes.txt"
     WS_AUTH_TOKEN: Optional[str] = None
     WS_EVENT_THROTTLE_MS: int = 0
+    CYCLIC_INGESTION_ENABLED: bool = False
+    CYCLIC_INGESTION_INTERVAL_SECONDS: int = 120
+    CYCLIC_INGESTION_BATCH_SIZE: int = 20
     
     # GraphRAG Settings
     GRAPHRAG_TOP_K: int = 5
@@ -137,6 +140,24 @@ class Settings(BaseSettings):
             return 5  # Default to 5 minutes if invalid
         # Clamp to reasonable bounds: min 1 minute, max 60 minutes
         return max(1, min(60, numeric))
+
+    @field_validator("CYCLIC_INGESTION_INTERVAL_SECONDS", mode="before")
+    @classmethod
+    def validate_cyclic_interval_seconds(cls, value):
+        try:
+            numeric = int(value)
+        except Exception:
+            return 120
+        return max(30, min(3600, numeric))
+
+    @field_validator("CYCLIC_INGESTION_BATCH_SIZE", mode="before")
+    @classmethod
+    def validate_cyclic_batch_size(cls, value):
+        try:
+            numeric = int(value)
+        except Exception:
+            return 20
+        return max(10, min(20, numeric))
 
     @property
     def openai_api_key(self) -> str:

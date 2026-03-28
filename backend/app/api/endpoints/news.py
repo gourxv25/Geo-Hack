@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from app.config import settings
 from app.database.postgres_client import postgres_client
 from app.database.redis_client import redis_client
+from app.news import news_service
 from app.realtime.ingestion_pipeline import realtime_ingestion_pipeline
 from app.vectorstore import chroma_service
 from app.limiter import limiter
@@ -24,6 +25,7 @@ NEWS_CACHE_KEY = "news:articles:v1"
 NEWS_STATUS_KEY = "news:status:v1"
 NEWS_CACHE_TTL_SECONDS = 300
 ARTICLES_TABLE = "articles"
+NEWS_EMBED_TRACK_KEY = "news:embedded:fingerprints:v1"
 
 
 class NewsArticle(BaseModel):
@@ -40,6 +42,30 @@ class NewsArticle(BaseModel):
     entities: List[Dict[str, Any]]
     sentiment: Optional[str] = None
     relevance_score: Optional[float] = None
+
+
+class NewsPreviewItem(BaseModel):
+    id: str
+    title: str
+    summary: str
+    source: str
+    timestamp: str
+
+
+class NewsDetailResponse(BaseModel):
+    id: str
+    title: str
+    content: str
+    source: str
+    timestamp: str
+    summary: str
+    url: str
+
+
+class NewsListResponse(BaseModel):
+    articles: List[NewsPreviewItem]
+    next_cursor: Optional[str] = None
+    total: int = 0
 
 
 class IngestionStatus(BaseModel):
@@ -89,6 +115,54 @@ async def get_articles(
     )
     sliced = filtered[max(offset, 0): max(offset, 0) + max(limit, 0)]
     return [_to_news_article(item) for item in sliced]
+
+
+@router.get("", response_model=NewsListResponse)
+async def list_news(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    source: Optional[str] = None,
+    category: Optional[str] = None,
+    region: Optional[str] = None,
+    domain: Optional[str] = None,
+    page: int = 1,
+    limit: int = 20,
+    cursor: Optional[str] = None,
+):
+    """
+    Filtered/paginated news list endpoint.
+    Backward compatible fields are preserved in each article object.
+    """
+    query_category = category or domain
+    raw = await news_service.list_news(
+        start_date=start_date,
+        end_date=end_date,
+        category=query_category,
+        region=region,
+        page=page,
+        limit=limit,
+        cursor=cursor,
+    )
+
+    articles = raw.get("articles", [])
+    if source:
+        articles = [a for a in articles if str(a.get("source", "")).lower() == source.lower()]
+
+    previews = [
+        NewsPreviewItem(
+            id=str(item.get("id", "")),
+            title=str(item.get("title", "Untitled")),
+            summary=str(item.get("summary", "")),
+            source=str(item.get("source", "Unknown")),
+            timestamp=str(item.get("published_at", datetime.utcnow().isoformat())),
+        )
+        for item in articles
+    ]
+    return NewsListResponse(
+        articles=previews,
+        next_cursor=raw.get("next_cursor"),
+        total=int(raw.get("total", 0)),
+    )
 
 
 @router.get("/ingestion/status", response_model=IngestionStatus)
@@ -323,6 +397,27 @@ async def get_news_stats():
     }
 
 
+@router.get("/{news_id}", response_model=NewsDetailResponse)
+async def get_news_by_id(news_id: str):
+    """Full article endpoint for click-to-open detail views."""
+    lookup_id = (news_id or "").strip()
+    if not lookup_id:
+        raise HTTPException(status_code=400, detail="news_id is required")
+
+    article = await news_service.get_news_by_id(lookup_id)
+    if article is None:
+        raise HTTPException(status_code=404, detail="News article not found")
+    return NewsDetailResponse(
+        id=str(article.get("id", lookup_id)),
+        title=str(article.get("title", "Untitled")),
+        content=str(article.get("content", "Full content not available.")),
+        source=str(article.get("source", "Unknown")),
+        timestamp=str(article.get("timestamp", datetime.utcnow().isoformat())),
+        summary=str(article.get("summary", "")),
+        url=str(article.get("url", "")),
+    )
+
+
 async def _load_or_refresh_articles() -> List[Dict[str, Any]]:
     cached = await redis_client.get(NEWS_CACHE_KEY)
     if isinstance(cached, list) and cached:
@@ -368,7 +463,18 @@ async def _refresh_articles() -> Dict[str, Any]:
     try:
         texts: List[str] = []
         metadatas: List[Dict[str, Any]] = []
+        fingerprints_to_mark: List[str] = []
+        if not redis_client.client:
+            await redis_client.connect()
+
         for item in normalized:
+            fingerprint = f"{item.get('url', '')}::{item.get('published_at', '')}"
+            already_embedded = False
+            if redis_client.client and fingerprint:
+                already_embedded = bool(await redis_client.client.hexists(NEWS_EMBED_TRACK_KEY, fingerprint))
+            if already_embedded:
+                continue
+
             base_text = (
                 f"Title: {item.get('title', '')}\n"
                 f"Summary: {item.get('summary', '')}\n"
@@ -389,10 +495,17 @@ async def _refresh_articles() -> Dict[str, Any]:
                         "chunk_total": len(chunks),
                     }
                 )
+            if fingerprint:
+                fingerprints_to_mark.append(fingerprint)
+
         if texts:
             await chroma_service.add_documents(texts, metadatas)
-    except Exception:
-        pass
+            if redis_client.client:
+                mapping = {fp: datetime.utcnow().isoformat() for fp in fingerprints_to_mark}
+                if mapping:
+                    await redis_client.client.hset(NEWS_EMBED_TRACK_KEY, mapping=mapping)
+    except Exception as exc:
+        logger.warning(f"Vector index update failed after ingestion: {exc}")
 
     ingestion["articles"] = normalized
     logger.info("News refresh completed")
@@ -488,6 +601,20 @@ async def _ensure_articles_table() -> None:
             END;
             """
         )
+
+    # Performance indexes for filtered/paginated news queries.
+    await postgres_client.execute_write(
+        f"CREATE INDEX IF NOT EXISTS idx_{ARTICLES_TABLE}_published_at ON {ARTICLES_TABLE}(published_at DESC);"
+    )
+    await postgres_client.execute_write(
+        f"CREATE INDEX IF NOT EXISTS idx_{ARTICLES_TABLE}_region ON {ARTICLES_TABLE}(region);"
+    )
+    await postgres_client.execute_write(
+        f"CREATE INDEX IF NOT EXISTS idx_{ARTICLES_TABLE}_domain ON {ARTICLES_TABLE}(domain);"
+    )
+    await postgres_client.execute_write(
+        f"CREATE INDEX IF NOT EXISTS idx_{ARTICLES_TABLE}_categories_gin ON {ARTICLES_TABLE} USING GIN (categories);"
+    )
 
 
 def validate_article(article: Dict[str, Any]) -> None:
